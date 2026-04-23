@@ -1,0 +1,90 @@
+{
+  "full_name": "Anil Kumar M",
+  "email": "naniyadav1312@gmail.com",
+  "phone": "+91 8688262907",
+  "location": "Hyderabad, Telangana, India",
+  "linkedin": "https://www.linkedin.com/in/anil-kumar-myakala-4371b02a4/",
+  "profile_summary": "Cloud Engineer with expertise in Java, Python, and Spring Boot for developing scalable backend systems. Google Cloud Certified with hands-on experience in GCP, AWS, and automation tools including Docker, n8n, and Twilio. Skilled in REST API development, database management, and workflow automation. Delivered projects improving reporting efficiency by 60%, reducing pipeline cycles by 75%, and cutting manual effort by 40%.",
+  "experience_years": 1,
+  "current_role": "Associate Cloud Engineer",
+  "current_company": "Tech Profuse Pvt Ltd",
+  "notice_period": "30 days",
+  "certifications": [
+    {
+      "name": "Google Associate Cloud Engineer Certification",
+      "issued": "Apr 2025"
+    },
+    {
+      "name": "Build with Vertex AI – Google Cloud Badge",
+      "issued": "Jul 2025"
+    }
+  ],
+  "education": [
+    {
+      "institution": "Aurora’s Scientific and Technological Institute",
+      "degree": "Bachelor of Technology in Computer Science",
+      "duration": "Aug 2020 – Jul 2024",
+      "cgpa": "6.33",
+      "location": "Hyderabad, India"
+    },
+    {
+      "institution": "Narayana Junior College",
+      "degree": "Intermediate (MPC)",
+      "duration": "Jun 2017 – Mar 2019",
+      "marks": "812",
+      "location": "Hyderabad, India"
+    },
+    {
+      "institution": "Telangana State Model School & College",
+      "degree": "SSC",
+      "year": "Mar 2017",
+      "cgpa": "7.3",
+      "location": "Siddipet, India"
+    }
+  ],
+  "professional_experience": [
+    {
+      "role": "Associate Cloud Engineer",
+      "company": "Tech Profuse Pvt Ltd",
+      "duration": "Sep 2024 – Present",
+      "responsibilities": [
+        "Designed real-time Looker Studio dashboards integrating multiple data sources, improving reporting efficiency by 60%",
+        "Deployed scalable ML models using Vertex AI with monitoring and versioning, reducing pipeline cycles by 75%",
+        "Developed Invoice Notification Orchestration System using Java, Spring Boot, and MySQL, reducing manual effort by 60%",
+        "Built Sales vs Purchase Price Validation Platform using Java and MySQL, enhancing reporting accuracy and accelerating reconciliation by 40%"
+      ]
+    }
+  ],
+  "technical_skills": {
+    "cloud_and_infrastructure": ["GCP", "AWS", "Microsoft Azure", "Docker"],
+    "automation_and_integration": ["n8n", "Retell AI", "Cal.com", "Twilio"],
+    "programming_and_frameworks": ["Java", "Python", "OOP", "J2EE", "Servlets", "JDBC", "Spring Boot", "Git"],
+    "ai_and_ml": ["SVM", "CNN", "RNN", "LSTM", "NLP", "OpenCV"],
+    "databases": ["MySQL", "MongoDB"],
+    "reporting_and_analytics": ["Looker Studio", "BigQuery"]
+  },
+  "languages": {
+    "English": "B2",
+    "Hindi": "B1",
+    "Telugu": "Native"
+  },
+  "academic_projects": [
+    {
+      "title": "Cyber Harasser Detection on Social Media",
+      "technologies": ["Python", "NLP", "Scikit-learn"],
+      "description": "Built ML-based system to detect abusive behavior on social media, improving cybercrime alerting efficiency by 85%"
+    },
+    {
+      "title": "Traffic Accident Detection Optimization",
+      "technologies": ["Python", "OpenCV", "CNN", "LSTM"],
+      "description": "Developed video-based accident detection model with 98% accuracy enabling real-time emergency alerts for smart cities"
+    }
+  ],
+  "soft_skills": [
+    "Problem-solving & analytical thinking",
+    "Communication & collaboration",
+    "Adaptability & quick learning",
+    "Leadership & end-to-end project delivery",
+    "Time management & meeting deadlines"
+  ]
+}

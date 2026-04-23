@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Logs and runtime data
+*.log
+automation.log
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Browser/session profiles and screenshots
+chrome-profile/
+chrome-profile-*/
+chrome-profiles/
+screenshots/
+
+# Generated exports
+*.xlsx
