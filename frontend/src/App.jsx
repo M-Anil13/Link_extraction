@@ -12,12 +12,47 @@ export default function App() {
   const [progress, setProgress] = useState({ saved: 0, max: 31 });
   const [links, setLinks] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [needLogin, setNeedLogin] = useState(false);
+  const [frame, setFrame] = useState(null);
   const wsRef = useRef(null);
   const logEndRef = useRef(null);
+  const imgRef = useRef(null);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
+
+  const sendInput = (obj) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(obj));
+    }
+  };
+
+  // Map a click on the streamed frame back to page coordinates (frame is 1280x800).
+  const onFrameClick = (e) => {
+    const img = imgRef.current;
+    if (!img) return;
+    const rect = img.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * img.naturalWidth;
+    const y = ((e.clientY - rect.top) / rect.height) * img.naturalHeight;
+    sendInput({ type: "click", x: Math.round(x), y: Math.round(y) });
+  };
+
+  // Forward keystrokes while the login panel is active.
+  useEffect(() => {
+    if (!needLogin) return;
+    const onKey = (e) => {
+      if (e.key.length === 1) {
+        sendInput({ type: "char", value: e.key });
+      } else {
+        sendInput({ type: "key", value: e.key }); // Enter/Backspace/Tab/Arrow*
+      }
+      if (["Tab", "Backspace", " ", "Enter", "ArrowUp", "ArrowDown"].includes(e.key))
+        e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [needLogin]);
 
   const addLog = (line) =>
     setLogs((l) => [...l, `${new Date().toLocaleTimeString()}  ${line}`]);
@@ -25,6 +60,8 @@ export default function App() {
   const start = () => {
     setLinks([]);
     setLogs([]);
+    setNeedLogin(false);
+    setFrame(null);
     setProgress({ saved: 0, max: Number(maxLinks) });
     setRunning(true);
     setStatus("Connecting...");
@@ -35,7 +72,12 @@ export default function App() {
     ws.onopen = () => {
       setStatus("Running");
       ws.send(
-        JSON.stringify({ profile, max_links: Number(maxLinks), headless })
+        JSON.stringify({
+          profile,
+          max_links: Number(maxLinks),
+          headless,
+          interactive: true,
+        })
       );
     };
 
@@ -54,6 +96,20 @@ export default function App() {
               return [...prev, ...add];
             });
           }
+          break;
+        case "need_login":
+          setNeedLogin(true);
+          setStatus("Login required");
+          addLog("🔑 " + (payload.message || "Login required"));
+          break;
+        case "frame":
+          setFrame(payload.data);
+          break;
+        case "login_ok":
+          setNeedLogin(false);
+          setFrame(null);
+          setStatus("Logged in — extracting");
+          addLog("✓ " + (payload.message || "Login detected"));
           break;
         case "progress":
           setProgress({ saved: payload.saved, max: payload.max });
@@ -179,6 +235,40 @@ export default function App() {
             />
           </div>
         </div>
+
+        {/* Interactive login panel (CDP screencast) */}
+        {needLogin && (
+          <div className="mt-6 rounded-2xl border border-amber-500/40 bg-slate-900 p-6">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-semibold text-amber-300">
+                Log in to Jobright
+              </h2>
+              <button
+                onClick={() => sendInput({ type: "login_done" })}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium hover:bg-amber-500"
+              >
+                I'm logged in →
+              </button>
+            </div>
+            <p className="mb-3 text-xs text-slate-400">
+              Click and type directly on the page below. When the jobs feed
+              appears, extraction starts automatically.
+            </p>
+            <div className="flex justify-center bg-black/40 p-2">
+              {frame ? (
+                <img
+                  ref={imgRef}
+                  src={`data:image/jpeg;base64,${frame}`}
+                  onClick={onFrameClick}
+                  className="max-w-full cursor-crosshair"
+                  alt="login"
+                />
+              ) : (
+                <div className="py-20 text-slate-500">Loading page…</div>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
           {/* Links table */}

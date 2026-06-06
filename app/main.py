@@ -1,4 +1,5 @@
 import asyncio
+import queue
 import threading
 from pathlib import Path
 
@@ -70,7 +71,8 @@ async def ws_extract(ws: WebSocket):
     """
     await ws.accept()
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
+    out_queue: asyncio.Queue = asyncio.Queue()   # events -> client
+    input_queue: queue.Queue = queue.Queue()     # input <- client (thread-safe)
     stop_flag = threading.Event()
 
     try:
@@ -82,11 +84,14 @@ async def ws_extract(ws: WebSocket):
     profile = params.get("profile", "vamshi")
     max_links = int(params.get("max_links", 31))
     headless = bool(params.get("headless", True))
+    interactive = bool(params.get("interactive", True))
     output = params.get("output", DEFAULT_OUTPUT_FILE)
 
     def on_event(etype, payload):
         # Called from the worker thread; hop back to the event loop.
-        loop.call_soon_threadsafe(queue.put_nowait, {"type": etype, "payload": payload})
+        loop.call_soon_threadsafe(
+            out_queue.put_nowait, {"type": etype, "payload": payload}
+        )
 
     def worker():
         try:
@@ -94,41 +99,48 @@ async def ws_extract(ws: WebSocket):
                 profile=profile,
                 max_links=max_links,
                 headless=headless,
+                interactive=interactive,
+                input_queue=input_queue,
                 output=output,
                 on_event=on_event,
                 should_stop=stop_flag.is_set,
             )
         except Exception as e:
             loop.call_soon_threadsafe(
-                queue.put_nowait, {"type": "error", "payload": {"message": repr(e)}}
+                out_queue.put_nowait, {"type": "error", "payload": {"message": repr(e)}}
             )
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, {"type": "_eof"})
+            loop.call_soon_threadsafe(out_queue.put_nowait, {"type": "_eof"})
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
 
-    async def listen_for_stop():
+    # Client -> server: stop + interactive-login input (click/key/char/...).
+    INPUT_TYPES = {"click", "move", "scroll", "char", "key", "login_done"}
+
+    async def listen_for_input():
         try:
             while True:
                 msg = await ws.receive_json()
                 if msg.get("action") == "stop":
                     stop_flag.set()
+                elif msg.get("type") in INPUT_TYPES:
+                    input_queue.put(msg)
         except Exception:
             stop_flag.set()
 
-    stop_task = asyncio.create_task(listen_for_stop())
+    input_task = asyncio.create_task(listen_for_input())
 
     try:
         while True:
-            event = await queue.get()
+            event = await out_queue.get()
             if event.get("type") == "_eof":
                 break
             await ws.send_json(event)
     except WebSocketDisconnect:
         stop_flag.set()
     finally:
-        stop_task.cancel()
+        input_task.cancel()
         try:
             await ws.close()
         except Exception:

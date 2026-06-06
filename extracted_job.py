@@ -1,5 +1,7 @@
 import argparse
+import queue
 import re
+import time
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -42,6 +44,11 @@ POPUP_TIMEOUT = 6000        # wait for a new tab to open after manual apply
 LOAD_TIMEOUT = 8000         # wait for a page to finish loading
 MANUAL_BTN_TIMEOUT = 600    # wait for the "Apply Manually" button
 MODAL_SETTLE = 600          # small settle after opening a modal
+
+# Interactive login (CDP screencast) — fixed viewport so frame pixels == page
+# coordinates 1:1, making click/key replay from the browser accurate.
+LOGIN_VIEWPORT = {"width": 1280, "height": 800}
+LOGIN_TIMEOUT_S = 300       # max seconds to wait for the user to finish login
 
 # A single feed card can stall (embed with no new tab, confirm button missing).
 # After this many no-progress passes on the same first card, force past it.
@@ -300,6 +307,92 @@ def resolve_profile_dir(profile_arg):
     return str(target.resolve())
 
 
+def is_logged_in(page):
+    """Heuristic: jobs feed (Apply buttons) visible -> logged in."""
+    try:
+        apply_buttons(page).first.wait_for(timeout=6000)
+        return True
+    except Exception:
+        return False
+
+
+def interactive_login(context, page, emit, input_queue, stop_requested,
+                      timeout_s=LOGIN_TIMEOUT_S):
+    """Stream the page to the UI (CDP screencast) and replay user input until
+    login completes. Returns True once the jobs feed appears or the user
+    signals done. No VNC/Docker needed — pure CDP.
+    """
+    cdp = context.new_cdp_session(page)
+    frames = queue.Queue()
+
+    def on_frame(params):
+        frames.put(params)
+
+    cdp.on("Page.screencastFrame", on_frame)
+    cdp.send("Page.startScreencast", {
+        "format": "jpeg", "quality": 55,
+        "maxWidth": LOGIN_VIEWPORT["width"], "maxHeight": LOGIN_VIEWPORT["height"],
+        "everyNthFrame": 1,
+    })
+    emit("need_login", {"message": "Log in to Jobright in the panel.",
+                        "width": LOGIN_VIEWPORT["width"],
+                        "height": LOGIN_VIEWPORT["height"]})
+
+    start = time.time()
+    done = False
+    try:
+        while time.time() - start < timeout_s and not stop_requested():
+            page.wait_for_timeout(120)  # pump CDP events + input
+
+            # Push the most recent frame to the UI (drop stale ones).
+            last = None
+            while not frames.empty():
+                params = frames.get()
+                last = params.get("data")
+                try:
+                    cdp.send("Page.screencastFrameAck",
+                             {"sessionId": params.get("sessionId")})
+                except Exception:
+                    pass
+            if last:
+                emit("frame", {"data": last})
+
+            # Replay queued user input from the browser.
+            while input_queue is not None and not input_queue.empty():
+                ev = input_queue.get()
+                etype = ev.get("type")
+                try:
+                    if etype == "click":
+                        page.mouse.click(ev["x"], ev["y"])
+                    elif etype == "move":
+                        page.mouse.move(ev["x"], ev["y"])
+                    elif etype == "scroll":
+                        page.mouse.wheel(0, ev.get("dy", 0))
+                    elif etype == "char":
+                        page.keyboard.type(ev["value"])
+                    elif etype == "key":
+                        page.keyboard.press(ev["value"])
+                    elif etype == "login_done":
+                        done = True
+                except Exception as e:
+                    emit("error", {"message": f"input replay: {e!r}"})
+                if done:
+                    break
+
+            if done or is_logged_in(page):
+                done = True
+                break
+    finally:
+        try:
+            cdp.send("Page.stopScreencast")
+        except Exception:
+            pass
+
+    if done:
+        emit("login_ok", {"message": "Login detected. Starting extraction..."})
+    return done
+
+
 def extract_links(
     profile=DEFAULT_PROFILE,
     max_links=DEFAULT_MAX_LINKS,
@@ -307,6 +400,8 @@ def extract_links(
     output=DEFAULT_OUTPUT_FILE,
     headless=False,
     login_wait=5000,
+    interactive=False,
+    input_queue=None,
     on_event=None,
     should_stop=None,
 ):
@@ -335,26 +430,43 @@ def extract_links(
 
     profile_dir = resolve_profile_dir(profile)
 
+    # Interactive mode streams the page to the UI, so it must run headless with
+    # a fixed viewport (frame pixels map 1:1 to page coordinates).
+    if interactive:
+        launch_kwargs = dict(headless=True, viewport=LOGIN_VIEWPORT)
+    else:
+        launch_kwargs = dict(headless=headless, args=["--start-maximized"])
+
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=profile_dir,
-            headless=headless,
             channel="chrome",
-            args=["--start-maximized"],
+            **launch_kwargs,
         )
 
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(url)
         emit("status", {"message": f"Opened {url} (profile: {profile})"})
-        page.wait_for_timeout(login_wait)
 
-        try:
-            apply_buttons(page).first.wait_for(timeout=30000)
-        except Exception:
-            emit("error", {"message": "No jobs/Apply buttons found (login required?)"})
-            context.close()
-            emit("done", {"saved": 0, "attempts": 0})
-            return list(collected_links)
+        if not is_logged_in(page):
+            if interactive:
+                ok = interactive_login(context, page, emit, input_queue,
+                                       stop_requested)
+                if not ok:
+                    emit("error", {"message": "Login not completed."})
+                    context.close()
+                    emit("done", {"saved": 0, "attempts": 0,
+                                  "total": len(collected_links)})
+                    return list(collected_links)
+            else:
+                # Non-interactive: give a visible browser time for manual login.
+                page.wait_for_timeout(login_wait)
+                if not is_logged_in(page):
+                    emit("error", {"message": "Not logged in (no jobs found)."})
+                    context.close()
+                    emit("done", {"saved": 0, "attempts": 0,
+                                  "total": len(collected_links)})
+                    return list(collected_links)
 
         emit("status", {"message": "Jobs detected. Extracting..."})
 
