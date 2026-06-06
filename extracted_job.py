@@ -300,39 +300,76 @@ def resolve_profile_dir(profile_arg):
     return str(target.resolve())
 
 
-def run():
-    args = parse_args()
-    profile_dir = resolve_profile_dir(args.profile)
-    load_existing(args.output)
+def extract_links(
+    profile=DEFAULT_PROFILE,
+    max_links=DEFAULT_MAX_LINKS,
+    url=DEFAULT_START_URL,
+    output=DEFAULT_OUTPUT_FILE,
+    headless=False,
+    login_wait=5000,
+    on_event=None,
+    should_stop=None,
+):
+    """Core extraction. Emits structured events via on_event(type, payload).
+
+    Event types: status, found, link, skip, done, error, stopped.
+    `should_stop()` (optional) is polled each loop so a UI can cancel.
+    Runs synchronously; call from a worker thread when used inside async code.
+    """
+    def emit(etype, payload=None):
+        print(f"[{etype}] {payload if payload is not None else ''}")
+        if on_event:
+            try:
+                on_event(etype, payload or {})
+            except Exception:
+                pass
+
+    def stop_requested():
+        return bool(should_stop and should_stop())
+
+    # Fresh state per run, then resume from any existing sheet.
+    collected_links.clear()
+    saved_links.clear()
+    load_existing(output)
+    emit("status", {"message": "Resumed existing links", "links": list(collected_links)})
+
+    profile_dir = resolve_profile_dir(profile)
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=profile_dir,
-            headless=args.headless,
+            headless=headless,
             channel="chrome",
             args=["--start-maximized"],
         )
 
         page = context.pages[0] if context.pages else context.new_page()
-        page.goto(args.url)
+        page.goto(url)
+        emit("status", {"message": f"Opened {url} (profile: {profile})"})
+        page.wait_for_timeout(login_wait)
 
-        print(f"Using profile directory: {profile_dir}")
-        print("Please login if required...")
-        page.wait_for_timeout(5000)
+        try:
+            apply_buttons(page).first.wait_for(timeout=30000)
+        except Exception:
+            emit("error", {"message": "No jobs/Apply buttons found (login required?)"})
+            context.close()
+            emit("done", {"saved": 0, "attempts": 0})
+            return list(collected_links)
 
-        apply_buttons(page).first.wait_for(timeout=0)
-        print("Jobs detected. Starting automation...")
+        emit("status", {"message": "Jobs detected. Extracting..."})
 
-        max_links = args.max_links
         saved_count = 0
         attempts = 0
         no_new_job_rounds = 0
         max_no_new_job_rounds = 5
-        stuck_on_card = 0  # consecutive no-progress passes on the current top card
+        stuck_on_card = 0
 
         while saved_count < max_links:
+            if stop_requested():
+                emit("stopped", {"saved": saved_count})
+                break
+
             total = apply_buttons(page).count()
-            print("DEBUG: Apply buttons found:", total)
 
             if total == 0:
                 loaded = try_load_more_jobs(page, total)
@@ -341,27 +378,26 @@ def run():
                     continue
                 no_new_job_rounds += 1
                 if no_new_job_rounds >= max_no_new_job_rounds:
-                    print("No more jobs available after multiple scroll attempts.")
+                    emit("status", {"message": "No more jobs after scrolling."})
                     break
                 continue
 
             no_new_job_rounds = 0
             attempts += 1
-            print(f"\nAttempt {attempts} | saved {saved_count}/{max_links} "
-                  f"| stuck={stuck_on_card}")
+            emit("progress", {"attempt": attempts, "saved": saved_count,
+                              "max": max_links, "stuck": stuck_on_card})
 
             made_progress = False
             try:
-                # Open the job's apply modal (proven 2-step click sequence).
                 apply_btn = apply_buttons(page).first
                 apply_btn.click()
                 page.wait_for_timeout(MODAL_SETTLE)
 
                 page_text = page.inner_text("body")
                 if any(keyword in page_text for keyword in BLOCK_KEYWORDS):
-                    print("Restricted job - skipping")
+                    emit("skip", {"reason": "restricted"})
                     dismiss_modal(page)
-                    made_progress = True  # card gets marked, leaves feed
+                    made_progress = True
                 else:
                     apply_buttons(page).first.click(force=True)
                     page.wait_for_timeout(MODAL_SETTLE)
@@ -370,50 +406,60 @@ def run():
                     page.bring_to_front()
 
                     if job_url:
-                        print("Extracted URL:", job_url)
                         if not is_application_url(job_url):
-                            print("Non-application portal - skipping")
+                            emit("skip", {"reason": "portal", "url": job_url})
                             dismiss_modal(page)
                             made_progress = True
                         elif job_url in saved_links:
-                            print("Duplicate job - skipping")
+                            emit("skip", {"reason": "duplicate", "url": job_url})
                             dismiss_modal(page)
                             made_progress = True
                         else:
                             saved_links.add(job_url)
                             collected_links.append(job_url)
-                            save_to_excel(args.output)
+                            save_to_excel(output)
                             saved_count += 1
-                            print(f"Saved ({saved_count}/{max_links}):", job_url)
+                            emit("link", {"url": job_url, "index": saved_count,
+                                          "max": max_links})
                             dismiss_modal(page)
                             made_progress = True
                     else:
-                        print("No external URL detected")
+                        emit("skip", {"reason": "no-url"})
                         dismiss_modal(page)
             except Exception as e:
-                print("Iteration error - recovering:", repr(e))
+                emit("error", {"message": repr(e)})
                 dismiss_modal(page)
 
-            # Always clean up extra tabs and settle.
             close_extra_tabs(context, page)
             page.wait_for_timeout(400)
 
-            # Stuck-card guard: if the top card never leaves the feed, force past
-            # it by scrolling, so we don't reprocess the same job forever.
             if made_progress:
                 stuck_on_card = 0
             else:
                 stuck_on_card += 1
                 if stuck_on_card >= MAX_STUCK_PER_CARD:
-                    print("Card stuck - scrolling past it.")
+                    emit("status", {"message": "Card stuck - scrolling past."})
                     page.mouse.wheel(0, 1200)
                     page.wait_for_timeout(800)
                     stuck_on_card = 0
 
-        print("\nExtraction complete.")
         context.close()
 
-    save_to_excel(args.output)
+    save_to_excel(output)
+    emit("done", {"saved": saved_count, "attempts": attempts,
+                  "total": len(collected_links)})
+    return list(collected_links)
+
+
+def run():
+    args = parse_args()
+    extract_links(
+        profile=args.profile,
+        max_links=args.max_links,
+        url=args.url,
+        output=args.output,
+        headless=args.headless,
+    )
 
 
 if __name__ == "__main__":

@@ -2,3 +2,6 @@ uvicorn[standard]
 fastapi
 playwright
 openpyxl
+sqlalchemy
+aiosqlite
+python-dotenv
