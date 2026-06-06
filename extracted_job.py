@@ -1,11 +1,35 @@
 import argparse
+import re
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from playwright.sync_api import sync_playwright
 
 collected_links = []
 saved_links = set()
+
+# --- Selectors -------------------------------------------------------------
+# We match by accessible button NAME with anchored regex instead of substring
+# text. Substring 'Apply' also matched 'Applied', so an already-applied card
+# looked like a fresh job and fed the stuck-card loop. Anchored regex avoids it.
+# If you inspect Jobright's DOM and find stable data-testid/class hooks, swap
+# these helpers to page.locator("[data-testid='...']") for resilience.
+APPLY_RE = re.compile(r"^\s*Apply( Now| With Autofill)?\s*$", re.I)
+MANUAL_RE = re.compile(r"^\s*(No, )?Apply Manually|Apply Without Customizing\s*$", re.I)
+YES_APPLIED_RE = re.compile(r"^\s*Yes, I applied!?|I applied\s*$", re.I)
+
+
+def apply_buttons(page):
+    """All fresh Apply buttons in the feed (excludes 'Applied')."""
+    return page.get_by_role("button", name=APPLY_RE)
+
+
+def manual_buttons(page):
+    return page.get_by_role("button", name=MANUAL_RE)
+
+
+def yes_applied_buttons(page):
+    return page.get_by_role("button", name=YES_APPLIED_RE)
 
 # Edit these defaults if you want to control behavior directly in code.
 DEFAULT_PROFILE = "vamshi"
@@ -103,6 +127,33 @@ def safe_wait_load(pg, timeout=LOAD_TIMEOUT):
         pass
 
 
+def load_existing(output_file):
+    """Resume: preload previously saved URLs so re-runs skip them and append.
+
+    Populates the global collected_links / saved_links from an existing sheet.
+    Safe to call when the file is missing or unreadable.
+    """
+    path = Path(output_file)
+    if not path.exists():
+        return
+    try:
+        wb = load_workbook(path, read_only=True)
+        ws = wb.active
+        loaded = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or len(row) < 2:
+                continue
+            url = row[1]
+            if url and url not in saved_links:
+                saved_links.add(url)
+                collected_links.append(url)
+                loaded += 1
+        wb.close()
+        print(f"Resume: loaded {loaded} existing links from {output_file}")
+    except Exception as e:
+        print("Resume: could not read existing file -", repr(e))
+
+
 def save_to_excel(output_file):
     wb = Workbook()
     ws = wb.active
@@ -116,36 +167,30 @@ def save_to_excel(output_file):
     print(f"Saved {output_file}")
 
 
-def try_load_more_jobs(page, apply_selector, previous_total):
+def try_load_more_jobs(page, previous_total):
     """Trigger infinite scroll and return True when more jobs are loaded."""
     try:
-        page.locator(apply_selector).last.scroll_into_view_if_needed(timeout=3000)
+        apply_buttons(page).last.scroll_into_view_if_needed(timeout=3000)
     except Exception:
         pass
 
     page.mouse.wheel(0, 2600)
     page.wait_for_timeout(1200)
 
-    new_total = page.locator(apply_selector).count()
+    new_total = apply_buttons(page).count()
     print(f"DEBUG: jobs before scroll={previous_total}, after scroll={new_total}")
     return new_total > previous_total
 
 
 def click_yes_applied_fast(page):
     """Click Jobright's 'Yes, I applied!' confirm so the card leaves the feed."""
-    selectors = [
-        "button:has-text('Yes, I applied!')",
-        "button:has-text('Yes, I applied')",
-        "button:has-text('I applied')",
-    ]
-    for selector in selectors:
-        try:
-            btn = page.locator(selector).first
-            if btn.count() > 0:
-                btn.click(force=True, timeout=800)
-                return True
-        except Exception:
-            pass
+    try:
+        btn = yes_applied_buttons(page).first
+        if btn.count() > 0:
+            btn.click(force=True, timeout=800)
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -167,11 +212,7 @@ def extract_external_url(context, page):
       2. Inline embed, no new tab (greenhouse /embed/...)   -> read current url
       3. Same-tab navigation away from jobright             -> read page url
     """
-    manual_apply_button = page.locator(
-        "button:has-text('No, Apply Manually'), "
-        "button:has-text('Apply Manually'), "
-        "button:has-text('Apply Without Customizing')"
-    )
+    manual_apply_button = manual_buttons(page)
 
     # Flow 1: manual button present -> expect a popup tab.
     try:
@@ -262,6 +303,7 @@ def resolve_profile_dir(profile_arg):
 def run():
     args = parse_args()
     profile_dir = resolve_profile_dir(args.profile)
+    load_existing(args.output)
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -278,13 +320,7 @@ def run():
         print("Please login if required...")
         page.wait_for_timeout(5000)
 
-        apply_selector = (
-            "button:has-text('Apply'), "
-            "button:has-text('Apply Now'), "
-            "button:has-text('Apply With Autofill')"
-        )
-
-        page.wait_for_selector(apply_selector, timeout=0)
+        apply_buttons(page).first.wait_for(timeout=0)
         print("Jobs detected. Starting automation...")
 
         max_links = args.max_links
@@ -295,11 +331,11 @@ def run():
         stuck_on_card = 0  # consecutive no-progress passes on the current top card
 
         while saved_count < max_links:
-            total = page.locator(apply_selector).count()
+            total = apply_buttons(page).count()
             print("DEBUG: Apply buttons found:", total)
 
             if total == 0:
-                loaded = try_load_more_jobs(page, apply_selector, total)
+                loaded = try_load_more_jobs(page, total)
                 if loaded:
                     no_new_job_rounds = 0
                     continue
@@ -317,7 +353,7 @@ def run():
             made_progress = False
             try:
                 # Open the job's apply modal (proven 2-step click sequence).
-                apply_btn = page.locator(apply_selector).first
+                apply_btn = apply_buttons(page).first
                 apply_btn.click()
                 page.wait_for_timeout(MODAL_SETTLE)
 
@@ -327,7 +363,7 @@ def run():
                     dismiss_modal(page)
                     made_progress = True  # card gets marked, leaves feed
                 else:
-                    page.locator(apply_selector).first.click(force=True)
+                    apply_buttons(page).first.click(force=True)
                     page.wait_for_timeout(MODAL_SETTLE)
 
                     job_url = extract_external_url(context, page)
