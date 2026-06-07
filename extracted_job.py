@@ -1,4 +1,5 @@
 import argparse
+import os
 import queue
 import re
 import time
@@ -460,10 +461,15 @@ def extract_links(
     else:
         launch_kwargs = dict(headless=headless, args=["--start-maximized"])
 
+    # Browser channel: "chrome" locally (real Chrome), empty in Docker/ARM
+    # so Playwright uses bundled Chromium. Set BROWSER_CHANNEL env to override.
+    channel = os.getenv("BROWSER_CHANNEL", "chrome")
+    if channel:
+        launch_kwargs["channel"] = channel
+
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=profile_dir,
-            channel="chrome",
             **launch_kwargs,
         )
 

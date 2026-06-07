@@ -1,6 +1,6 @@
 uvicorn[standard]
 fastapi
-playwright
+playwright==1.53.0
 openpyxl
 sqlalchemy
 aiosqlite

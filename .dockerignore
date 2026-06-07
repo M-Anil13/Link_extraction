@@ -1,6 +1,15 @@
 .git
+.gitignore
+.vscode
+.idea
+.env
+.env.*
 .venv
 venv
+README.md
+DEPLOY.md
+*.md
+automation.log
 __pycache__
 **/__pycache__
 *.pyc
