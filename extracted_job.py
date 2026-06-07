@@ -16,6 +16,10 @@ from playwright.sync_api import sync_playwright
 APPLY_RE = re.compile(r"^\s*Apply( Now| With Autofill)?\s*$", re.I)
 MANUAL_RE = re.compile(r"^\s*(No, )?Apply Manually|Apply Without Customizing\s*$", re.I)
 YES_APPLIED_RE = re.compile(r"^\s*Yes, I applied!?|I applied\s*$", re.I)
+# Logged-out signal: auth CTAs only appear before login (substring match).
+LOGGED_OUT_RE = re.compile(
+    r"sign\s*in|sign\s*up|log\s*in|login|get started|continue with", re.I
+)
 
 
 def apply_buttons(page):
@@ -307,11 +311,29 @@ def resolve_profile_dir(profile_arg):
     return str(target.resolve())
 
 
-def is_logged_in(page):
-    """Heuristic: jobs feed (Apply buttons) visible -> logged in."""
+def logged_out_markers(page):
+    """True if auth CTAs (Sign in / Log in / Get started) are on the page."""
     try:
-        apply_buttons(page).first.wait_for(timeout=6000)
-        return True
+        if page.get_by_role("button", name=LOGGED_OUT_RE).count() > 0:
+            return True
+        if page.get_by_role("link", name=LOGGED_OUT_RE).count() > 0:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def is_logged_in(page, wait_ms=5000):
+    """Logged in = jobs feed Apply buttons present AND no auth CTA visible.
+
+    The public landing page has a marketing 'Apply Now' button, so checking
+    Apply buttons alone gives a false positive; the auth-CTA check rules it out.
+    """
+    if logged_out_markers(page):
+        return False
+    try:
+        apply_buttons(page).first.wait_for(timeout=wait_ms)
+        return not logged_out_markers(page)
     except Exception:
         return False
 
@@ -379,7 +401,9 @@ def interactive_login(context, page, emit, input_queue, stop_requested,
                 if done:
                     break
 
-            if done or is_logged_in(page):
+            # Quick, non-blocking completion check (avoid 5s wait per tick).
+            if done or (not logged_out_markers(page)
+                        and apply_buttons(page).count() > 0):
                 done = True
                 break
     finally:
