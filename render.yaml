@@ -1,0 +1,18 @@
+# Render Blueprint for the backend (FastAPI + Playwright via Docker).
+# In Render: New + -> Blueprint -> pick this repo. It reads this file.
+services:
+  - type: web
+    name: jobright-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter            # 'free' may run out of RAM for Chrome; starter is safer
+    envVars:
+      - key: HEADLESS
+        value: "True"
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./job_automation.db
+    # Optional (paid): persistent disk keeps logged-in Chrome profiles across deploys.
+    # disk:
+    #   name: profiles
+    #   mountPath: /app/chrome-profiles
+    #   sizeGB: 1

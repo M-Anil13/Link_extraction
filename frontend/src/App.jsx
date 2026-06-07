@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
-const API = "http://localhost:8000";
-const WS_URL = "ws://localhost:8000/ws/extract";
+// Backend URL: set VITE_API_URL in Vercel (e.g. https://your-backend.onrender.com).
+// Falls back to localhost for local dev. WS URL is derived (http->ws, https->wss).
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const WS_URL = API.replace(/^http/, "ws") + "/ws/extract";
 
 export default function App() {
   const [profile, setProfile] = useState("vamshi");
