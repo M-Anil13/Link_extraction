@@ -7,9 +7,6 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from playwright.sync_api import sync_playwright
 
-collected_links = []
-saved_links = set()
-
 # --- Selectors -------------------------------------------------------------
 # We match by accessible button NAME with anchored regex instead of substring
 # text. Substring 'Apply' also matched 'Applied', so an already-applied card
@@ -135,33 +132,36 @@ def safe_wait_load(pg, timeout=LOAD_TIMEOUT):
 
 
 def load_existing(output_file):
-    """Resume: preload previously saved URLs so re-runs skip them and append.
+    """Resume: read previously saved URLs from a sheet (per-session, no globals).
 
-    Populates the global collected_links / saved_links from an existing sheet.
-    Safe to call when the file is missing or unreadable.
+    Returns (collected_links list, saved_links set). Safe if file missing.
     """
+    collected, saved = [], set()
     path = Path(output_file)
     if not path.exists():
-        return
+        return collected, saved
     try:
         wb = load_workbook(path, read_only=True)
         ws = wb.active
-        loaded = 0
         for row in ws.iter_rows(min_row=2, values_only=True):
             if not row or len(row) < 2:
                 continue
             url = row[1]
-            if url and url not in saved_links:
-                saved_links.add(url)
-                collected_links.append(url)
-                loaded += 1
+            if url and url not in saved:
+                saved.add(url)
+                collected.append(url)
         wb.close()
-        print(f"Resume: loaded {loaded} existing links from {output_file}")
+        print(f"Resume: loaded {len(collected)} existing links from {output_file}")
     except Exception as e:
         print("Resume: could not read existing file -", repr(e))
+    return collected, saved
 
 
-def save_to_excel(output_file):
+def save_to_excel(output_file, collected_links):
+    path = Path(output_file)
+    if path.parent and not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Filtered Job Links"
@@ -422,11 +422,10 @@ def extract_links(
     def stop_requested():
         return bool(should_stop and should_stop())
 
-    # Fresh state per run, then resume from any existing sheet.
-    collected_links.clear()
-    saved_links.clear()
-    load_existing(output)
-    emit("status", {"message": "Resumed existing links", "links": list(collected_links)})
+    # Per-run state (no module globals -> safe for concurrent sessions).
+    collected_links, saved_links = load_existing(output)
+    emit("status", {"message": "Resumed existing links",
+                    "links": list(collected_links)})
 
     profile_dir = resolve_profile_dir(profile)
 
@@ -529,7 +528,7 @@ def extract_links(
                         else:
                             saved_links.add(job_url)
                             collected_links.append(job_url)
-                            save_to_excel(output)
+                            save_to_excel(output, collected_links)
                             saved_count += 1
                             emit("link", {"url": job_url, "index": saved_count,
                                           "max": max_links})
@@ -557,7 +556,7 @@ def extract_links(
 
         context.close()
 
-    save_to_excel(output)
+    save_to_excel(output, collected_links)
     emit("done", {"saved": saved_count, "attempts": attempts,
                   "total": len(collected_links)})
     return list(collected_links)

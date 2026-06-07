@@ -37,3 +37,4 @@ screenshots/
 
 # Generated exports
 *.xlsx
+outputs/

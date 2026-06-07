@@ -14,6 +14,7 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [needLogin, setNeedLogin] = useState(false);
   const [frame, setFrame] = useState(null);
+  const [downloadUrl, setDownloadUrl] = useState(null);
   const wsRef = useRef(null);
   const logEndRef = useRef(null);
   const imgRef = useRef(null);
@@ -62,6 +63,7 @@ export default function App() {
     setLogs([]);
     setNeedLogin(false);
     setFrame(null);
+    setDownloadUrl(null);
     setProgress({ saved: 0, max: Number(maxLinks) });
     setRunning(true);
     setStatus("Connecting...");
@@ -84,6 +86,10 @@ export default function App() {
     ws.onmessage = (e) => {
       const { type, payload } = JSON.parse(e.data);
       switch (type) {
+        case "session":
+          setDownloadUrl(API + payload.download);
+          addLog("• session " + payload.session_id);
+          break;
         case "status":
           setStatus(payload.message || "Running");
           addLog("• " + (payload.message || ""));
@@ -276,8 +282,13 @@ export default function App() {
             <div className="mb-3 flex items-center justify-between">
               <h2 className="font-semibold">Links ({links.length})</h2>
               <a
-                href={`${API}/download`}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium hover:bg-emerald-500"
+                href={downloadUrl || undefined}
+                className={
+                  "rounded-lg px-3 py-1.5 text-sm font-medium " +
+                  (downloadUrl
+                    ? "bg-emerald-600 hover:bg-emerald-500"
+                    : "pointer-events-none bg-slate-700 text-slate-500")
+                }
               >
                 Download Excel
               </a>

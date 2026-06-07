@@ -1,6 +1,7 @@
 import asyncio
 import queue
 import threading
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -11,10 +12,20 @@ from app.automation.runner import run_application
 from app.database.db import engine, Base
 from app.utils.logger import setup_logger
 from app.utils.otp_store import OTP_STORE
-from extracted_job import extract_links, DEFAULT_OUTPUT_FILE
+from extracted_job import extract_links
 
 app = FastAPI(title="Jobright Link Extractor")
 logger = setup_logger()
+
+# Per-session outputs live here; one file per run so concurrent users never
+# clobber each other's links.
+OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+# A Chrome profile cannot be opened by two Playwright processes at once.
+# Guard so a second concurrent run on the same profile is rejected, not crashed.
+ACTIVE_PROFILES: set[str] = set()
+PROFILE_LOCK = threading.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,9 +62,10 @@ async def submit_otp(data: dict):
 
 
 @app.get("/download")
-async def download(file: str = DEFAULT_OUTPUT_FILE):
-    path = Path(file)
-    if not path.exists():
+async def download(file: str):
+    # Only allow files inside OUTPUT_DIR (block path traversal).
+    path = (OUTPUT_DIR / Path(file).name).resolve()
+    if path.parent != OUTPUT_DIR.resolve() or not path.exists():
         return {"error": "file not found"}
     return FileResponse(
         path,
@@ -85,7 +97,23 @@ async def ws_extract(ws: WebSocket):
     max_links = int(params.get("max_links", 31))
     headless = bool(params.get("headless", True))
     interactive = bool(params.get("interactive", True))
-    output = params.get("output", DEFAULT_OUTPUT_FILE)
+
+    # Reject a concurrent run on the same profile (Chrome locks the dir).
+    with PROFILE_LOCK:
+        if profile in ACTIVE_PROFILES:
+            await ws.send_json({"type": "error", "payload": {
+                "message": f"Profile '{profile}' is already running. "
+                           f"Use a different profile."}})
+            await ws.close()
+            return
+        ACTIVE_PROFILES.add(profile)
+
+    # Unique output file per session.
+    session_id = uuid.uuid4().hex[:12]
+    output_name = f"{session_id}.xlsx"
+    output = str(OUTPUT_DIR / output_name)
+    await ws.send_json({"type": "session", "payload": {
+        "session_id": session_id, "download": f"/download?file={output_name}"}})
 
     def on_event(etype, payload):
         # Called from the worker thread; hop back to the event loop.
@@ -141,6 +169,8 @@ async def ws_extract(ws: WebSocket):
         stop_flag.set()
     finally:
         input_task.cancel()
+        with PROFILE_LOCK:
+            ACTIVE_PROFILES.discard(profile)
         try:
             await ws.close()
         except Exception:
