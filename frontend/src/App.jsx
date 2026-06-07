@@ -266,7 +266,7 @@ export default function App() {
                   ref={imgRef}
                   src={`data:image/jpeg;base64,${frame}`}
                   onClick={onFrameClick}
-                  className="max-w-full cursor-crosshair"
+                  className="max-w-full cursor-pointer"
                   alt="login"
                 />
               ) : (
