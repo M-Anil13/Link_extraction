@@ -1,4 +1,14 @@
-﻿# Jobright Job Application Link Extractor (Playwright)
+﻿---
+title: Jobright Link Extractor
+emoji: 🔎
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
+# Jobright Job Application Link Extractor (Playwright)
 
 Automates job application workflows on Jobright.ai using Playwright and Chrome, extracts non-portal job application links, and saves them to an Excel sheet.
 
