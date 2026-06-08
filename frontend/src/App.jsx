@@ -143,6 +143,8 @@ export default function App() {
           setRunning(false);
           ws.close();
           break;
+        case "ping":
+          break; // keepalive, ignore
         default:
           break;
       }
@@ -150,8 +152,8 @@ export default function App() {
 
     ws.onclose = () => setRunning(false);
     ws.onerror = () => {
-      addLog("⚠ websocket error — is the API running on :8000?");
-      setStatus("Error");
+      addLog("⚠ connection lost — backend unreachable or dropped.");
+      setStatus("Connection lost");
       setRunning(false);
     };
   };

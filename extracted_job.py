@@ -216,6 +216,23 @@ def dismiss_modal(page):
     page.wait_for_timeout(400)
 
 
+def dismiss_overlays(page):
+    """Remove popups that float over the feed and block Apply clicks.
+
+    The Trustpilot review popup (and similar) intercept pointer events, causing
+    30s click timeouts. Strip them from the DOM before clicking Apply.
+    """
+    try:
+        page.evaluate(
+            """() => {
+                const sel = '[class*="trustpilot-popup"],[class*="trustpilot"]';
+                document.querySelectorAll(sel).forEach(e => e.remove());
+            }"""
+        )
+    except Exception:
+        pass
+
+
 def extract_external_url(context, page):
     """Return the external application URL after clicking manual apply.
 
@@ -530,8 +547,10 @@ def extract_links(
 
             made_progress = False
             try:
-                apply_btn = apply_buttons(page).first
-                apply_btn.click()
+                # Clear floating popups (Trustpilot etc) that block the click,
+                # and use a short timeout so a blocked card fails fast (not 30s).
+                dismiss_overlays(page)
+                apply_buttons(page).first.click(timeout=6000)
                 page.wait_for_timeout(MODAL_SETTLE)
 
                 page_text = page.inner_text("body")

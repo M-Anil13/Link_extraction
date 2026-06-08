@@ -159,6 +159,18 @@ async def ws_extract(ws: WebSocket):
 
     input_task = asyncio.create_task(listen_for_input())
 
+    # Heartbeat: keep the WebSocket busy during long quiet periods (e.g. a slow
+    # card) so proxies (HF/Cloudflare) don't drop it as idle.
+    async def heartbeat():
+        try:
+            while True:
+                await asyncio.sleep(20)
+                await ws.send_json({"type": "ping", "payload": {}})
+        except Exception:
+            pass
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+
     try:
         while True:
             event = await out_queue.get()
@@ -169,6 +181,7 @@ async def ws_extract(ws: WebSocket):
         stop_flag.set()
     finally:
         input_task.cancel()
+        heartbeat_task.cancel()
         with PROFILE_LOCK:
             ACTIVE_PROFILES.discard(profile)
         try:
