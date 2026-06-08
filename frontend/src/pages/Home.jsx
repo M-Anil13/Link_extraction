@@ -230,8 +230,11 @@ export default function Home() {
         </p>
 
         <div className="grid gap-6 sm:grid-cols-2">
-          {/* Jobright - active */}
-          <div className="rounded-2xl border border-emerald-500/40 bg-slate-900 p-6">
+          {/* Jobright - active, clickable -> sign in -> extractor */}
+          <button
+            onClick={() => navigate(authed ? "/app" : "/login")}
+            className="rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 text-left transition-all hover:border-emerald-400 hover:bg-slate-800"
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 font-bold">
@@ -246,10 +249,13 @@ export default function Home() {
             <p className="mt-4 text-sm text-slate-400">
               Live now — direct apply links extracted from your Jobright feed.
             </p>
-          </div>
+            <span className="mt-4 inline-block text-sm font-medium text-emerald-300">
+              {authed ? "Open extractor →" : "Sign in to start →"}
+            </span>
+          </button>
 
-          {/* LinkedIn - coming soon */}
-          <div className="rounded-2xl border border-amber-500/30 bg-slate-900 p-6">
+          {/* LinkedIn - coming soon (not clickable yet) */}
+          <div className="cursor-not-allowed rounded-2xl border border-amber-500/30 bg-slate-900 p-6 opacity-60">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0a66c2] font-bold">
