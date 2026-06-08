@@ -227,13 +227,23 @@ def dismiss_overlays(page):
         page.evaluate(
             """() => {
                 const sel = [
+                    // Jobright marketing / promos
                     '[class*="trustpilot"]',
-                    '[class*="promotion"]',
-                    '[class*="promo-card"]',
+                    '[class*="promotion"]', '[class*="promo-card"]',
                     '[class*="trial-promotion"]',
-                    '.ant-modal-root',
-                    '.ant-modal-wrap',
-                    '.ant-modal-mask'
+                    '[class*="upgrade"]', '[class*="paywall"]', '[class*="premium-modal"]',
+                    '[class*="newsletter"]', '[class*="subscribe-modal"]',
+                    // cookie / consent banners
+                    '[class*="cookie"]', '[class*="consent"]', '[id*="cookie"]',
+                    // onboarding tours
+                    '.ant-tour', '[class*="onboarding"]', '[class*="-tour"]',
+                    // antd masks / overlays
+                    '.ant-modal-root', '.ant-modal-wrap', '.ant-modal-mask',
+                    '.ant-drawer', '.ant-drawer-mask',
+                    // 3rd-party chat / survey widgets
+                    '[id*="intercom"]', '[class*="intercom"]',
+                    '.crisp-client', '#crisp-chatbox',
+                    '[class*="drift"]', '[class*="hotjar"]', '[id*="hj_feedback"]'
                 ].join(',');
                 document.querySelectorAll(sel).forEach(e => e.remove());
             }"""
