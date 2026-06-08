@@ -188,7 +188,9 @@ export default function Home() {
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <Link to="/" className="flex items-center gap-2">
           <img src="/logo.png" alt="LinkPilot" className="h-8 w-8 invert" />
-          <span className="text-lg font-bold tracking-tight">LinkPilot</span>
+          <span className="text-lg font-bold tracking-tight">
+            Link<span className="text-cyan-400">Pilot</span>
+          </span>
         </Link>
         <Link
           to={authed ? "/app" : "/login"}
