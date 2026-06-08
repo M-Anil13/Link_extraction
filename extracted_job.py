@@ -219,16 +219,29 @@ def dismiss_modal(page):
 def dismiss_overlays(page):
     """Remove popups that float over the feed and block Apply clicks.
 
-    The Trustpilot review popup (and similar) intercept pointer events, causing
-    30s click timeouts. Strip them from the DOM before clicking Apply.
+    Trustpilot review popups, weekly-trial promo cards, and leftover modal
+    masks intercept pointer events -> click timeouts. Strip them + close any
+    open modal before clicking Apply.
     """
     try:
         page.evaluate(
             """() => {
-                const sel = '[class*="trustpilot-popup"],[class*="trustpilot"]';
+                const sel = [
+                    '[class*="trustpilot"]',
+                    '[class*="promotion"]',
+                    '[class*="promo-card"]',
+                    '[class*="trial-promotion"]',
+                    '.ant-modal-root',
+                    '.ant-modal-wrap',
+                    '.ant-modal-mask'
+                ].join(',');
                 document.querySelectorAll(sel).forEach(e => e.remove());
             }"""
         )
+    except Exception:
+        pass
+    try:
+        page.keyboard.press("Escape")
     except Exception:
         pass
 
