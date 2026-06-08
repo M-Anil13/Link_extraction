@@ -177,8 +177,8 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-5xl px-6 py-10">
         <header className="mb-8 flex items-center gap-3">
-          <span className="flex items-center justify-center rounded-xl bg-slate-900 p-2 ring-1 ring-cyan-500/30">
-            <img src="/logo.png" alt="LinkPilot" className="h-8 w-8 invert" />
+          <span className="flex items-center justify-center rounded-xl bg-white p-2 shadow-lg shadow-cyan-500/20">
+            <img src="/logo.png" alt="LinkPilot" className="h-8 w-8" />
           </span>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">

@@ -36,8 +36,8 @@ export default function Admin() {
       <div className="mx-auto max-w-5xl px-6 py-10">
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="flex items-center justify-center rounded-xl bg-slate-950 p-2 ring-1 ring-cyan-500/30">
-              <img src="/logo.png" alt="LinkPilot" className="h-7 w-7 invert" />
+            <span className="flex items-center justify-center rounded-xl bg-white p-2 shadow-lg shadow-cyan-500/20">
+              <img src="/logo.png" alt="LinkPilot" className="h-7 w-7" />
             </span>
             <h1 className="text-3xl font-bold">Admin dashboard</h1>
           </div>
