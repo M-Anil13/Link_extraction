@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from datetime import datetime
 from .db import Base
 
@@ -22,6 +22,10 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     name = Column(String)
     picture = Column(String)
+    password_hash = Column(String)
+    verified = Column(Boolean, default=False)
+    otp_code = Column(String)
+    otp_expires = Column(DateTime)
     login_count = Column(Integer, default=0)
     run_count = Column(Integer, default=0)
     first_seen = Column(DateTime, default=datetime.utcnow)

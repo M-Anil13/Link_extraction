@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import Home from "./pages/Home.jsx";
 import Login from "./pages/Login.jsx";
+import Signup from "./pages/Signup.jsx";
+import Forgot from "./pages/Forgot.jsx";
 import Admin from "./pages/Admin.jsx";
 import App from "./App.jsx"; // existing extractor, unchanged
 
@@ -17,6 +19,8 @@ export default function Root() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
+      <Route path="/forgot" element={<Forgot />} />
       <Route path="/admin" element={<Admin />} />
       <Route
         path="/app"

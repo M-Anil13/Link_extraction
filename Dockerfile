@@ -23,9 +23,11 @@ ENV DATABASE_URL=sqlite+aiosqlite:///./job_automation.db
 # Empty = use bundled Chromium (no Chrome channel). Locally defaults to "chrome".
 ENV BROWSER_CHANNEL=""
 
-# User accounts "user1:pass1,user2:pass2" + admin key (set at runtime via -e).
-ENV APP_USERS=""
+# Admin key + Gmail SMTP for signup/verify/reset emails (set at runtime via -e).
 ENV ADMIN_KEY=""
+ENV SMTP_USER=""
+ENV SMTP_PASS=""
+ENV SMTP_FROM=""
 
 # Render/Railway provide $PORT; default to 8000 locally.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

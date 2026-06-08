@@ -5,7 +5,7 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export default function Login() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -18,7 +18,7 @@ export default function Login() {
       const res = await fetch(`${API}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -36,13 +36,8 @@ export default function Login() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-sm rounded-2xl bg-slate-900 p-8 shadow-lg"
-      >
-        <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
-          ← Home
-        </Link>
+      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl bg-slate-900 p-8 shadow-lg">
+        <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">← Home</Link>
         <div className="mt-4 flex items-center gap-2">
           <span className="flex items-center justify-center rounded-xl bg-white p-2 shadow-lg shadow-cyan-500/20">
             <img src="/logo.png" alt="LinkPilot" className="h-7 w-7" />
@@ -52,11 +47,12 @@ export default function Login() {
         <p className="mt-2 text-sm text-slate-400">Log in to use the extractor.</p>
 
         <label className="mt-6 block text-sm">
-          <span className="text-slate-400">Username</span>
+          <span className="text-slate-400">Email</span>
           <input
+            type="email"
             className="mt-1 w-full rounded-lg bg-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             autoFocus
           />
         </label>
@@ -75,16 +71,21 @@ export default function Login() {
 
         <button
           type="submit"
-          disabled={busy || !username || !password}
+          disabled={busy || !email || !password}
           className={
             "mt-6 w-full rounded-lg px-4 py-2 font-medium " +
-            (busy || !username || !password
+            (busy || !email || !password
               ? "cursor-not-allowed bg-slate-700 text-slate-500"
               : "bg-indigo-600 hover:bg-indigo-500")
           }
         >
           {busy ? "Signing in…" : "Sign in"}
         </button>
+
+        <div className="mt-4 flex justify-between text-sm text-slate-400">
+          <Link to="/forgot" className="hover:text-slate-200">Forgot password?</Link>
+          <Link to="/signup" className="text-indigo-400 hover:text-indigo-300">Create account</Link>
+        </div>
       </form>
     </div>
   );

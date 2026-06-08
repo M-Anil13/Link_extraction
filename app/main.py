@@ -1,22 +1,26 @@
 import asyncio
 import os
 import queue
+import random
+import re
 import threading
 import uuid
 from pathlib import Path
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select, func
+from passlib.context import CryptContext
 
 from app.automation.runner import run_application
 from app.database.db import engine, Base, AsyncSessionLocal
 from app.database.models import User, RunLog
 from app.utils.logger import setup_logger
 from app.utils.otp_store import OTP_STORE
+from app.utils.email import send_email
 from extracted_job import extract_links
 
 app = FastAPI(title="Jobright Link Extractor")
@@ -32,42 +36,21 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 ACTIVE_PROFILES: set[str] = set()
 PROFILE_LOCK = threading.Lock()
 
-# User accounts: set APP_USERS env as "user1:pass1,user2:pass2".
-# Each user is an identity so the admin dashboard can track them.
-def _parse_users(raw):
-    out = {}
-    for pair in (raw or "").split(","):
-        pair = pair.strip()
-        if ":" in pair:
-            u, p = pair.split(":", 1)
-            if u.strip():
-                out[u.strip()] = p.strip()
-    return out
-
-
-APP_USERS = _parse_users(os.getenv("APP_USERS", ""))
-
 # Admin: set ADMIN_KEY env; required to view the admin dashboard data.
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
+# Password hashing + email validation.
+pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+OTP_TTL_MIN = 10
 
-async def upsert_user(email, name=None, picture=None):
-    """Create the user or bump login_count + last_seen."""
-    if not email:
-        return
-    async with AsyncSessionLocal() as db:
-        row = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
-        if row:
-            row.login_count = (row.login_count or 0) + 1
-            row.last_seen = datetime.utcnow()
-            if name:
-                row.name = name
-            if picture:
-                row.picture = picture
-        else:
-            db.add(User(email=email, name=name, picture=picture,
-                        login_count=1, run_count=0))
-        await db.commit()
+
+def gen_otp():
+    return f"{random.randint(0, 999999):06d}"
+
+
+async def get_user(db, email):
+    return (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
 
 
 async def log_run(email, links_saved):
@@ -107,17 +90,141 @@ async def apply_job(data: dict):
     return await run_application(data.get("url"))
 
 
+def _err(status, msg):
+    return JSONResponse(status_code=status, content={"ok": False, "error": msg})
+
+
+@app.post("/auth/signup")
+async def auth_signup(data: dict):
+    """Register a user; email an OTP to verify the address before they can log in."""
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    name = (data.get("name") or "").strip() or email.split("@")[0]
+    if not EMAIL_RE.match(email):
+        return _err(400, "enter a valid email")
+    if len(password) < 6:
+        return _err(400, "password must be at least 6 characters")
+
+    otp = gen_otp()
+    expires = datetime.utcnow() + timedelta(minutes=OTP_TTL_MIN)
+    async with AsyncSessionLocal() as db:
+        row = await get_user(db, email)
+        if row and row.verified:
+            return _err(409, "email already registered — please log in")
+        if row:  # exists but unverified -> refresh password + OTP
+            row.password_hash = pwd_ctx.hash(password)
+            row.name = name
+            row.otp_code = otp
+            row.otp_expires = expires
+        else:
+            db.add(User(email=email, name=name,
+                        password_hash=pwd_ctx.hash(password),
+                        verified=False, otp_code=otp, otp_expires=expires))
+        await db.commit()
+
+    sent = await asyncio.to_thread(
+        send_email, email, "Your NexCV verification code",
+        f"Your verification code is {otp}. It expires in {OTP_TTL_MIN} minutes.",
+    )
+    if not sent:
+        return _err(500, "could not send verification email (server email not configured)")
+    return {"ok": True, "message": "verification code sent to your email"}
+
+
+@app.post("/auth/verify")
+async def auth_verify(data: dict):
+    """Confirm signup with the emailed OTP."""
+    email = (data.get("email") or "").strip().lower()
+    otp = (data.get("otp") or "").strip()
+    async with AsyncSessionLocal() as db:
+        row = await get_user(db, email)
+        if not row or not row.otp_code:
+            return _err(400, "no pending verification for this email")
+        if row.otp_expires and datetime.utcnow() > row.otp_expires:
+            return _err(400, "code expired — sign up again")
+        if otp != row.otp_code:
+            return _err(400, "incorrect code")
+        row.verified = True
+        row.otp_code = None
+        row.otp_expires = None
+        await db.commit()
+    return {"ok": True, "email": email, "name": row.name}
+
+
 @app.post("/auth/login")
 async def auth_login(data: dict):
-    """Username + password login against APP_USERS (set in env)."""
-    username = (data.get("username") or "").strip()
+    """Email + password login against the database (must be verified)."""
+    email = (data.get("email") or data.get("username") or "").strip().lower()
     password = data.get("password") or ""
-    if not APP_USERS:
-        return JSONResponse(status_code=500, content={"ok": False, "error": "no users configured (set APP_USERS)"})
-    if username in APP_USERS and APP_USERS[username] == password:
-        await upsert_user(username, name=username)
-        return {"ok": True, "email": username, "name": username}
-    return JSONResponse(status_code=401, content={"ok": False, "error": "invalid username or password"})
+    async with AsyncSessionLocal() as db:
+        row = await get_user(db, email)
+        if not row or not row.password_hash or not pwd_ctx.verify(password, row.password_hash):
+            return _err(401, "invalid email or password")
+        if not row.verified:
+            return _err(403, "email not verified — check your inbox")
+        row.login_count = (row.login_count or 0) + 1
+        row.last_seen = datetime.utcnow()
+        await db.commit()
+        return {"ok": True, "email": row.email, "name": row.name}
+
+
+@app.post("/auth/forgot")
+async def auth_forgot(data: dict):
+    """Email an OTP to reset the password."""
+    email = (data.get("email") or "").strip().lower()
+    async with AsyncSessionLocal() as db:
+        row = await get_user(db, email)
+        # Always return ok (don't reveal which emails exist).
+        if row:
+            row.otp_code = gen_otp()
+            row.otp_expires = datetime.utcnow() + timedelta(minutes=OTP_TTL_MIN)
+            await db.commit()
+            await asyncio.to_thread(
+                send_email, email, "Your NexCV password reset code",
+                f"Your reset code is {row.otp_code}. It expires in {OTP_TTL_MIN} minutes.",
+            )
+    return {"ok": True, "message": "if that email exists, a reset code was sent"}
+
+
+@app.post("/auth/reset")
+async def auth_reset(data: dict):
+    """Set a new password using the emailed reset OTP."""
+    email = (data.get("email") or "").strip().lower()
+    otp = (data.get("otp") or "").strip()
+    new_password = data.get("new_password") or ""
+    if len(new_password) < 6:
+        return _err(400, "password must be at least 6 characters")
+    async with AsyncSessionLocal() as db:
+        row = await get_user(db, email)
+        if not row or not row.otp_code:
+            return _err(400, "no reset request for this email")
+        if row.otp_expires and datetime.utcnow() > row.otp_expires:
+            return _err(400, "code expired — request again")
+        if otp != row.otp_code:
+            return _err(400, "incorrect code")
+        row.password_hash = pwd_ctx.hash(new_password)
+        row.verified = True
+        row.otp_code = None
+        row.otp_expires = None
+        await db.commit()
+    return {"ok": True, "message": "password updated — you can log in"}
+
+
+@app.post("/auth/change-password")
+async def auth_change_password(data: dict):
+    """Change password while logged in (email + old + new)."""
+    email = (data.get("email") or "").strip().lower()
+    old_password = data.get("old_password") or ""
+    new_password = data.get("new_password") or ""
+    if len(new_password) < 6:
+        return _err(400, "new password must be at least 6 characters")
+    async with AsyncSessionLocal() as db:
+        row = await get_user(db, email)
+        if not row or not pwd_ctx.verify(old_password, row.password_hash or ""):
+            return _err(401, "current password is incorrect")
+        row.password_hash = pwd_ctx.hash(new_password)
+        await db.commit()
+    return {"ok": True, "message": "password changed"}
 
 
 @app.get("/admin/users")
