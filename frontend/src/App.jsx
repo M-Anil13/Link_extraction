@@ -176,13 +176,14 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-5xl px-6 py-10">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">
-            Jobright Link Extractor
-          </h1>
-          <p className="text-slate-400">
-            Extract external job application links live.
-          </p>
+        <header className="mb-8 flex items-center gap-3">
+          <img src="/logo.png" alt="LinkPilot" className="h-10 w-10 invert" />
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">LinkPilot</h1>
+            <p className="text-slate-400">
+              Extract external job application links live.
+            </p>
+          </div>
         </header>
 
         {/* Controls */}

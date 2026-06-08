@@ -35,7 +35,10 @@ export default function Admin() {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-5xl px-6 py-10">
         <div className="mb-8 flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Admin dashboard</h1>
+          <div className="flex items-center gap-3">
+            <img src="/logo.png" alt="LinkPilot" className="h-9 w-9 invert" />
+            <h1 className="text-3xl font-bold">Admin dashboard</h1>
+          </div>
           <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
             ← Home
           </Link>
