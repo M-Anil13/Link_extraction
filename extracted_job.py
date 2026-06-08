@@ -15,7 +15,7 @@ from playwright.sync_api import sync_playwright
 # If you inspect Jobright's DOM and find stable data-testid/class hooks, swap
 # these helpers to page.locator("[data-testid='...']") for resilience.
 APPLY_RE = re.compile(r"^\s*Apply( Now| With Autofill)?\s*$", re.I)
-MANUAL_RE = re.compile(r"^\s*(No, )?Apply Manually|Apply Without Customizing\s*$", re.I)
+MANUAL_RE = re.compile(r"Apply Without Customizing|Apply Manually|Apply on company", re.I)
 YES_APPLIED_RE = re.compile(r"^\s*Yes, I applied!?|I applied\s*$", re.I)
 # Logged-out signal: auth CTAs only appear before login (substring match).
 LOGGED_OUT_RE = re.compile(
@@ -29,7 +29,13 @@ def apply_buttons(page):
 
 
 def manual_buttons(page):
-    return page.get_by_role("button", name=MANUAL_RE)
+    # "Apply Without Customizing" is often a link / plain text, not a <button>.
+    # Match button OR link OR any element containing the text.
+    return (
+        page.get_by_role("button", name=MANUAL_RE)
+        .or_(page.get_by_role("link", name=MANUAL_RE))
+        .or_(page.get_by_text(MANUAL_RE))
+    )
 
 
 def yes_applied_buttons(page):
@@ -576,8 +582,17 @@ def extract_links(
                 apply_buttons(page).first.click(timeout=6000)
                 page.wait_for_timeout(MODAL_SETTLE)
 
-                page_text = page.inner_text("body")
-                if any(keyword in page_text for keyword in BLOCK_KEYWORDS):
+                # Only check the opened job dialog for restriction keywords,
+                # not the whole page (a persistent phrase elsewhere = skip all).
+                scope_text = ""
+                try:
+                    modal = page.locator(".ant-modal:visible, [role='dialog']:visible").last
+                    if modal.count() > 0:
+                        scope_text = modal.inner_text(timeout=1000)
+                except Exception:
+                    scope_text = ""
+
+                if scope_text and any(k in scope_text for k in BLOCK_KEYWORDS):
                     emit("skip", {"reason": "restricted"})
                     dismiss_modal(page)
                     made_progress = True
