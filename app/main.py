@@ -1,4 +1,5 @@
 import asyncio
+import os
 import queue
 import threading
 import uuid
@@ -6,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.automation.runner import run_application
 from app.database.db import engine, Base
@@ -26,6 +27,9 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # Guard so a second concurrent run on the same profile is rejected, not crashed.
 ACTIVE_PROFILES: set[str] = set()
 PROFILE_LOCK = threading.Lock()
+
+# Google OAuth: set GOOGLE_CLIENT_ID env to your OAuth client id.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,6 +54,35 @@ async def root():
 @app.post("/apply")
 async def apply_job(data: dict):
     return await run_application(data.get("url"))
+
+
+@app.post("/auth/google")
+async def auth_google(data: dict):
+    """Verify a Google ID token from the frontend; return basic profile.
+
+    Frontend sends {credential: <google_id_token>}. We verify it against our
+    GOOGLE_CLIENT_ID and return the user's email/name/picture on success.
+    """
+    token = data.get("credential")
+    if not token:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "no credential"})
+    if not GOOGLE_CLIENT_ID:
+        return JSONResponse(status_code=500, content={"ok": False, "error": "GOOGLE_CLIENT_ID not set"})
+    try:
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as google_requests
+
+        info = google_id_token.verify_oauth2_token(
+            token, google_requests.Request(), GOOGLE_CLIENT_ID
+        )
+        return {
+            "ok": True,
+            "email": info.get("email"),
+            "name": info.get("name"),
+            "picture": info.get("picture"),
+        }
+    except Exception as e:
+        return JSONResponse(status_code=401, content={"ok": False, "error": f"invalid token: {e!r}"})
 
 
 @app.post("/submit-otp")
