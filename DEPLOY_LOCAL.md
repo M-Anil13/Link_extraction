@@ -38,9 +38,15 @@ docker build -t jobright-backend .
 
 ### 2. Run the backend container (detached, auto-restart)
 ```powershell
+# create the DB file once so Docker mounts a file (not a folder)
+if (-not (Test-Path job_automation.db)) { New-Item -ItemType File job_automation.db }
+
 docker run -d --restart unless-stopped -p 8000:8000 `
+  -e APP_USERS="naniyadav1312@gmail.com:Pass@123,anil:anil123" `
+  -e ADMIN_KEY="nexcv-admin-secret" `
   -v ${PWD}/chrome-profiles:/app/chrome-profiles `
   -v ${PWD}/outputs:/app/outputs `
+  -v ${PWD}/job_automation.db:/app/job_automation.db `
   --name jobright jobright-backend
 ```
 Verify:
@@ -48,6 +54,24 @@ Verify:
 docker ps                 # shows 'jobright' Up, 0.0.0.0:8000->8000
 curl http://localhost:8000   # {"message":"Jobright Link Extractor API running"}
 ```
+
+### Auth & Admin (IMPORTANT)
+
+These are **environment variables you choose** and pass with `-e` above. They are
+NOT stored in any file — that keeps passwords out of the repo. Whatever you set
+here is what users / admin type.
+
+| Env | Purpose | Example |
+|-----|---------|---------|
+| `APP_USERS` | Login accounts, `user:pass` comma-separated. Username must match exactly at login. | `anil:anil123,raj:raj456` |
+| `ADMIN_KEY` | Password for the `/admin` dashboard. | `nexcv-admin-secret` |
+
+- **User login:** go to `/login`, use a username + password from `APP_USERS`.
+- **Admin dashboard:** go to `/admin`, enter the `ADMIN_KEY` value.
+- To change users/admin key: edit the `-e` values, then
+  `docker rm -f jobright` and re-run the `docker run` command above.
+- If login says "Login failed": the backend image is old (rebuild step 1) or the
+  username/password don't match `APP_USERS`.
 
 ### 3. Start the Cloudflare tunnel (in a SEPARATE PowerShell window)
 ```powershell
