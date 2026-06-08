@@ -106,28 +106,20 @@ ATS_DOMAINS = [
 
 
 def is_application_url(url):
+    """Accept every external apply link EXCEPT LinkedIn (and jobright itself).
+
+    Previously this only accepted known ATS/path patterns and dropped the rest.
+    Now we save any external link; only LinkedIn and the jobright.ai source site
+    are excluded.
+    """
     if not url:
         return False
     u = url.lower()
-    if any(domain in u for domain in BLOCK_PORTAL_DOMAINS):
+    if "linkedin.com" in u:
         return False
-    if any(domain in u for domain in ATS_DOMAINS):
-        return True
-    if "/apply" in u or "application" in u:
-        return True
-
-    # Practical fallback: accept direct career/job posting paths.
-    job_path_markers = [
-        "/jobs/",
-        "/job/",
-        "/careers/",
-        "/positions/",
-        "/openings/",
-        "/p/",
-    ]
-    if any(marker in u for marker in job_path_markers):
-        return True
-    return False
+    if "jobright.ai" in u:  # source site, not a real external application
+        return False
+    return True
 
 
 def safe_wait_load(pg, timeout=LOAD_TIMEOUT):
