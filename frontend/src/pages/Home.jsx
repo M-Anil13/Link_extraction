@@ -186,7 +186,10 @@ export default function Home() {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Nav */}
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-        <span className="text-lg font-bold tracking-tight">🔎 Jobright Extractor</span>
+        <Link to="/" className="flex items-center gap-2">
+          <img src="/logo.png" alt="LinkPilot" className="h-8 w-8 invert" />
+          <span className="text-lg font-bold tracking-tight">LinkPilot</span>
+        </Link>
         <Link
           to={authed ? "/app" : "/login"}
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500"
