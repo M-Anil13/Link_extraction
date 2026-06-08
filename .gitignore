@@ -37,4 +37,5 @@ screenshots/
 
 # Generated exports
 *.xlsx
-outputs/Link_extraction/
+outputs/
+Link_extraction/
