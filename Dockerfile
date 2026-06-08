@@ -23,8 +23,9 @@ ENV DATABASE_URL=sqlite+aiosqlite:///./job_automation.db
 # Empty = use bundled Chromium (no Chrome channel). Locally defaults to "chrome".
 ENV BROWSER_CHANNEL=""
 
-# Google OAuth client id (set at runtime: docker run -e GOOGLE_CLIENT_ID=...).
-ENV GOOGLE_CLIENT_ID=""
+# User accounts "user1:pass1,user2:pass2" + admin key (set at runtime via -e).
+ENV APP_USERS=""
+ENV ADMIN_KEY=""
 
 # Render/Railway provide $PORT; default to 8000 locally.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

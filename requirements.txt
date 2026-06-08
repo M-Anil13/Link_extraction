@@ -5,4 +5,3 @@ openpyxl
 sqlalchemy
 aiosqlite
 python-dotenv
-google-auth

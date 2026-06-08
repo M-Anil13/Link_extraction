@@ -76,12 +76,19 @@ export default function App() {
 
     ws.onopen = () => {
       setStatus("Running");
+      let email = null;
+      try {
+        email = JSON.parse(localStorage.getItem("user") || "{}").email || null;
+      } catch {
+        email = null;
+      }
       ws.send(
         JSON.stringify({
           profile,
           max_links: Number(maxLinks),
           headless,
           interactive: true,
+          email,
         })
       );
     };

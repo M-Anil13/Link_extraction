@@ -13,4 +13,25 @@ class JobApplication(Base):
     full_name = Column(String)
     email = Column(String)
     company = Column(String)
-    status = Column(String)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String)
+    picture = Column(String)
+    login_count = Column(Integer, default=0)
+    run_count = Column(Integer, default=0)
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+
+
+class RunLog(Base):
+    __tablename__ = "run_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True)
+    links_saved = Column(Integer, default=0)
+    started_at = Column(DateTime, default=datetime.utcnow)

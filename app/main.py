@@ -5,12 +5,16 @@ import threading
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from datetime import datetime
+
+from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import select, func
 
 from app.automation.runner import run_application
-from app.database.db import engine, Base
+from app.database.db import engine, Base, AsyncSessionLocal
+from app.database.models import User, RunLog
 from app.utils.logger import setup_logger
 from app.utils.otp_store import OTP_STORE
 from extracted_job import extract_links
@@ -28,8 +32,55 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 ACTIVE_PROFILES: set[str] = set()
 PROFILE_LOCK = threading.Lock()
 
-# Google OAuth: set GOOGLE_CLIENT_ID env to your OAuth client id.
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+# User accounts: set APP_USERS env as "user1:pass1,user2:pass2".
+# Each user is an identity so the admin dashboard can track them.
+def _parse_users(raw):
+    out = {}
+    for pair in (raw or "").split(","):
+        pair = pair.strip()
+        if ":" in pair:
+            u, p = pair.split(":", 1)
+            if u.strip():
+                out[u.strip()] = p.strip()
+    return out
+
+
+APP_USERS = _parse_users(os.getenv("APP_USERS", ""))
+
+# Admin: set ADMIN_KEY env; required to view the admin dashboard data.
+ADMIN_KEY = os.getenv("ADMIN_KEY", "")
+
+
+async def upsert_user(email, name=None, picture=None):
+    """Create the user or bump login_count + last_seen."""
+    if not email:
+        return
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if row:
+            row.login_count = (row.login_count or 0) + 1
+            row.last_seen = datetime.utcnow()
+            if name:
+                row.name = name
+            if picture:
+                row.picture = picture
+        else:
+            db.add(User(email=email, name=name, picture=picture,
+                        login_count=1, run_count=0))
+        await db.commit()
+
+
+async def log_run(email, links_saved):
+    """Record an extraction run and bump the user's run_count."""
+    if not email:
+        return
+    async with AsyncSessionLocal() as db:
+        db.add(RunLog(email=email, links_saved=int(links_saved or 0)))
+        row = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if row:
+            row.run_count = (row.run_count or 0) + 1
+            row.last_seen = datetime.utcnow()
+        await db.commit()
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,33 +107,45 @@ async def apply_job(data: dict):
     return await run_application(data.get("url"))
 
 
-@app.post("/auth/google")
-async def auth_google(data: dict):
-    """Verify a Google ID token from the frontend; return basic profile.
+@app.post("/auth/login")
+async def auth_login(data: dict):
+    """Username + password login against APP_USERS (set in env)."""
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not APP_USERS:
+        return JSONResponse(status_code=500, content={"ok": False, "error": "no users configured (set APP_USERS)"})
+    if username in APP_USERS and APP_USERS[username] == password:
+        await upsert_user(username, name=username)
+        return {"ok": True, "email": username, "name": username}
+    return JSONResponse(status_code=401, content={"ok": False, "error": "invalid username or password"})
 
-    Frontend sends {credential: <google_id_token>}. We verify it against our
-    GOOGLE_CLIENT_ID and return the user's email/name/picture on success.
-    """
-    token = data.get("credential")
-    if not token:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "no credential"})
-    if not GOOGLE_CLIENT_ID:
-        return JSONResponse(status_code=500, content={"ok": False, "error": "GOOGLE_CLIENT_ID not set"})
-    try:
-        from google.oauth2 import id_token as google_id_token
-        from google.auth.transport import requests as google_requests
 
-        info = google_id_token.verify_oauth2_token(
-            token, google_requests.Request(), GOOGLE_CLIENT_ID
-        )
-        return {
-            "ok": True,
-            "email": info.get("email"),
-            "name": info.get("name"),
-            "picture": info.get("picture"),
-        }
-    except Exception as e:
-        return JSONResponse(status_code=401, content={"ok": False, "error": f"invalid token: {e!r}"})
+@app.get("/admin/users")
+async def admin_users(x_admin_key: str = Header(default="")):
+    """Admin: list users + usage. Requires header X-Admin-Key == ADMIN_KEY."""
+    if not ADMIN_KEY or x_admin_key != ADMIN_KEY:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
+    async with AsyncSessionLocal() as db:
+        users = (await db.execute(select(User).order_by(User.last_seen.desc()))).scalars().all()
+        total_runs = (await db.execute(select(func.count(RunLog.id)))).scalar() or 0
+        total_links = (await db.execute(select(func.coalesce(func.sum(RunLog.links_saved), 0)))).scalar() or 0
+    return {
+        "ok": True,
+        "total_users": len(users),
+        "total_runs": total_runs,
+        "total_links": total_links,
+        "users": [
+            {
+                "email": u.email,
+                "name": u.name,
+                "login_count": u.login_count,
+                "run_count": u.run_count,
+                "first_seen": u.first_seen.isoformat() if u.first_seen else None,
+                "last_seen": u.last_seen.isoformat() if u.last_seen else None,
+            }
+            for u in users
+        ],
+    }
 
 
 @app.post("/submit-otp")
@@ -130,6 +193,7 @@ async def ws_extract(ws: WebSocket):
     max_links = int(params.get("max_links", 31))
     headless = bool(params.get("headless", True))
     interactive = bool(params.get("interactive", True))
+    user_email = params.get("email")  # for usage tracking
 
     # Reject a concurrent run on the same profile (Chrome locks the dir).
     with PROFILE_LOCK:
@@ -209,6 +273,12 @@ async def ws_extract(ws: WebSocket):
             event = await out_queue.get()
             if event.get("type") == "_eof":
                 break
+            if event.get("type") == "done":
+                # Record usage for this run.
+                try:
+                    await log_run(user_email, event.get("payload", {}).get("saved"))
+                except Exception:
+                    pass
             await ws.send_json(event)
     except WebSocketDisconnect:
         stop_flag.set()
