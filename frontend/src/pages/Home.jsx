@@ -187,7 +187,9 @@ export default function Home() {
       {/* Nav */}
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <Link to="/" className="flex items-center gap-2">
-          <img src="/logo.png" alt="LinkPilot" className="h-8 w-8 invert" />
+          <span className="flex items-center justify-center rounded-xl bg-slate-900 p-1.5 ring-1 ring-cyan-500/30">
+            <img src="/logo.png" alt="LinkPilot" className="h-6 w-6 invert" />
+          </span>
           <span className="text-lg font-bold tracking-tight">
             Link<span className="text-cyan-400">Pilot</span>
           </span>

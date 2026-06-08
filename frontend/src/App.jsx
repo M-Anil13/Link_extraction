@@ -177,7 +177,9 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-5xl px-6 py-10">
         <header className="mb-8 flex items-center gap-3">
-          <img src="/logo.png" alt="LinkPilot" className="h-10 w-10 invert" />
+          <span className="flex items-center justify-center rounded-xl bg-slate-900 p-2 ring-1 ring-cyan-500/30">
+            <img src="/logo.png" alt="LinkPilot" className="h-8 w-8 invert" />
+          </span>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">
               Link<span className="text-cyan-400">Pilot</span>

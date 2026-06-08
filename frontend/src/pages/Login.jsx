@@ -44,7 +44,9 @@ export default function Login() {
           ← Home
         </Link>
         <div className="mt-4 flex items-center gap-2">
-          <img src="/logo.png" alt="LinkPilot" className="h-8 w-8 invert" />
+          <span className="flex items-center justify-center rounded-xl bg-slate-950 p-2 ring-1 ring-cyan-500/30">
+            <img src="/logo.png" alt="LinkPilot" className="h-7 w-7 invert" />
+          </span>
           <h1 className="text-2xl font-bold">Sign in</h1>
         </div>
         <p className="mt-2 text-sm text-slate-400">Log in to use the extractor.</p>
