@@ -6,7 +6,7 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const WS_URL = API.replace(/^http/, "ws") + "/ws/extract";
 
 export default function App() {
-  const [profile, setProfile] = useState("vamshi");
+  const [profile, setProfile] = useState("");
   const [maxLinks, setMaxLinks] = useState(31);
   const [headless, setHeadless] = useState(true);
   const [running, setRunning] = useState(false);
@@ -61,6 +61,7 @@ export default function App() {
     setLogs((l) => [...l, `${new Date().toLocaleTimeString()}  ${line}`]);
 
   const start = () => {
+    if (!profile.trim()) return; // profile required
     setLinks([]);
     setLogs([]);
     setNeedLogin(false);
@@ -184,6 +185,7 @@ export default function App() {
             <input
               className="rounded-lg bg-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
               value={profile}
+              placeholder="enter a profile name"
               onChange={(e) => setProfile(e.target.value)}
               disabled={running}
             />
@@ -213,7 +215,13 @@ export default function App() {
             {!running ? (
               <button
                 onClick={start}
-                className="w-full rounded-lg bg-indigo-600 px-4 py-2 font-medium hover:bg-indigo-500"
+                disabled={!profile.trim()}
+                className={
+                  "w-full rounded-lg px-4 py-2 font-medium " +
+                  (profile.trim()
+                    ? "bg-indigo-600 hover:bg-indigo-500"
+                    : "cursor-not-allowed bg-slate-700 text-slate-500")
+                }
               >
                 Start
               </button>
