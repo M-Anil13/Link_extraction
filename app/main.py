@@ -12,8 +12,8 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+import bcrypt
 from sqlalchemy import select, func
-from passlib.context import CryptContext
 
 from app.automation.runner import run_application
 from app.database.db import engine, Base, AsyncSessionLocal
@@ -39,8 +39,18 @@ PROFILE_LOCK = threading.Lock()
 # Admin: set ADMIN_KEY env; required to view the admin dashboard data.
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
-# Password hashing + email validation.
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing (bcrypt directly; 72-byte cap per bcrypt) + email validation.
+def hash_pw(password):
+    return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_pw(password, hashed):
+    try:
+        return bcrypt.checkpw(password.encode("utf-8")[:72], (hashed or "").encode("utf-8"))
+    except Exception:
+        return False
+
+
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 OTP_TTL_MIN = 10
 
@@ -112,13 +122,13 @@ async def auth_signup(data: dict):
         if row and row.verified:
             return _err(409, "email already registered — please log in")
         if row:  # exists but unverified -> refresh password + OTP
-            row.password_hash = pwd_ctx.hash(password)
+            row.password_hash = hash_pw(password)
             row.name = name
             row.otp_code = otp
             row.otp_expires = expires
         else:
             db.add(User(email=email, name=name,
-                        password_hash=pwd_ctx.hash(password),
+                        password_hash=hash_pw(password),
                         verified=False, otp_code=otp, otp_expires=expires))
         await db.commit()
 
@@ -158,7 +168,7 @@ async def auth_login(data: dict):
     password = data.get("password") or ""
     async with AsyncSessionLocal() as db:
         row = await get_user(db, email)
-        if not row or not row.password_hash or not pwd_ctx.verify(password, row.password_hash):
+        if not row or not row.password_hash or not verify_pw(password, row.password_hash):
             return _err(401, "invalid email or password")
         if not row.verified:
             return _err(403, "email not verified — check your inbox")
@@ -202,7 +212,7 @@ async def auth_reset(data: dict):
             return _err(400, "code expired — request again")
         if otp != row.otp_code:
             return _err(400, "incorrect code")
-        row.password_hash = pwd_ctx.hash(new_password)
+        row.password_hash = hash_pw(new_password)
         row.verified = True
         row.otp_code = None
         row.otp_expires = None
@@ -220,9 +230,9 @@ async def auth_change_password(data: dict):
         return _err(400, "new password must be at least 6 characters")
     async with AsyncSessionLocal() as db:
         row = await get_user(db, email)
-        if not row or not pwd_ctx.verify(old_password, row.password_hash or ""):
+        if not row or not verify_pw(old_password, row.password_hash or ""):
             return _err(401, "current password is incorrect")
-        row.password_hash = pwd_ctx.hash(new_password)
+        row.password_hash = hash_pw(new_password)
         await db.commit()
     return {"ok": True, "message": "password changed"}
 
