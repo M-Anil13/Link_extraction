@@ -425,52 +425,83 @@ def naukri_process(context, page, emit, save_link):
     return False
 
 
-# ---- LinkedIn source (SCAFFOLD — needs tuning; HIGH ban/ToS risk) ----------
-# Flow (to confirm): recommended/search jobs. "Easy Apply" = internal (no link,
-# skip). "Apply" = external, opens the company site in a NEW TAB (save that URL).
+# ---- LinkedIn source (HIGH ban/ToS risk) -----------------------------------
+# Flow: /jobs/collections/recommended (= "Show all") shows a job LIST (left) +
+# DETAIL panel (right). Click a card -> detail loads -> its apply button is
+# either "Easy Apply" (internal, skip) or "Apply" (external, opens the company
+# site in a NEW TAB -> save that URL). Dismiss (X) the card so the next becomes
+# first; that also means we never reprocess the same job.
 LINKEDIN_START_URL = "https://www.linkedin.com/jobs/collections/recommended/"
-# Match "Apply" but NOT "Easy Apply".
-LINKEDIN_APPLY_RE = re.compile(r"^\s*Apply\s*$", re.I)
-LINKEDIN_LOGGED_OUT_RE = re.compile(r"sign in|join now|new to linkedin", re.I)
+LINKEDIN_EASY_RE = re.compile(r"easy apply", re.I)
+LINKEDIN_SIGNIN_RE = re.compile(r"^\s*sign in\s*$", re.I)
 
 
-def linkedin_apply_buttons(page):
-    # TODO: confirm from a logged-in LinkedIn screenshot. Excludes Easy Apply.
-    return page.get_by_role("button", name=LINKEDIN_APPLY_RE)
+def linkedin_job_cards(page):
+    # Job cards in the left results list (several class variants over time).
+    return page.locator(
+        "li.scaffold-layout__list-item, div.job-card-container, [data-job-id]"
+    )
 
 
-def linkedin_logged_in(page, wait_ms=5000):
+def linkedin_logged_in(page, wait_ms=6000):
     try:
-        if page.get_by_role("link", name=LINKEDIN_LOGGED_OUT_RE).count() > 0:
+        if page.get_by_role("link", name=LINKEDIN_SIGNIN_RE).count() > 0:
             return False
     except Exception:
         pass
     try:
-        linkedin_apply_buttons(page).first.wait_for(timeout=wait_ms)
+        linkedin_job_cards(page).first.wait_for(timeout=wait_ms)
         return True
     except Exception:
         return False
 
 
-def linkedin_process(context, page, emit, save_link):
+def linkedin_dismiss_card(card):
+    """Remove a processed card so the next one becomes first (no reprocessing)."""
     try:
-        url = capture_new_tab_url(context, page, linkedin_apply_buttons(page).first)
-    except Exception:
-        url = None
-    page.bring_to_front()
-    if url:
-        save_link(url)
-        try:
-            page.keyboard.press("Escape")
-        except Exception:
-            pass
-        return True
-    emit("skip", {"reason": "no-url"})  # likely an Easy-Apply (internal) job
-    try:
-        page.keyboard.press("Escape")
+        x = card.get_by_role("button", name=re.compile(r"dismiss|hide|remove", re.I)).first
+        if x.count() > 0:
+            x.click(force=True, timeout=1500)
     except Exception:
         pass
-    return False
+
+
+def linkedin_process(context, page, emit, save_link):
+    cards = linkedin_job_cards(page)
+    if cards.count() == 0:
+        return False
+    card = cards.first
+    try:
+        card.scroll_into_view_if_needed(timeout=2000)
+        card.click(timeout=4000)          # load the detail panel on the right
+        page.wait_for_timeout(1200)
+    except Exception:
+        linkedin_dismiss_card(card)
+        return True
+
+    # Apply button in the detail panel.
+    apply_btn = page.locator("button.jobs-apply-button, .jobs-apply-button").first
+    try:
+        label = apply_btn.inner_text(timeout=1500) or ""
+    except Exception:
+        label = ""
+
+    if not label:
+        emit("skip", {"reason": "no-apply"})
+    elif LINKEDIN_EASY_RE.search(label):
+        emit("skip", {"reason": "easy-apply"})
+    else:
+        # External apply -> opens the company site in a new tab.
+        url = capture_new_tab_url(context, page, apply_btn)
+        page.bring_to_front()
+        if url:
+            save_link(url)              # emits portal/duplicate/link
+        else:
+            emit("skip", {"reason": "no-url"})
+
+    linkedin_dismiss_card(card)
+    page.wait_for_timeout(500)
+    return True
 
 
 SOURCES = {
@@ -496,8 +527,8 @@ SOURCES = {
     "linkedin": {
         "start_url": LINKEDIN_START_URL,
         "logged_in": lambda page: linkedin_logged_in(page),
-        "quick_login": lambda page: linkedin_apply_buttons(page).count() > 0,
-        "count": lambda page: linkedin_apply_buttons(page).count(),
+        "quick_login": lambda page: linkedin_job_cards(page).count() > 0,
+        "count": lambda page: linkedin_job_cards(page).count(),
         "load_more": lambda page, total: try_load_more_jobs(page, total),
         "process": linkedin_process,
         "dismiss": lambda page: page.keyboard.press("Escape"),
