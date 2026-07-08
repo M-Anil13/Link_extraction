@@ -303,6 +303,151 @@ def close_extra_tabs(context, keep_page):
             pass
 
 
+# =====================================================================
+# Pluggable sources. Each source provides:
+#   start_url      : where to open
+#   logged_in(page): full check (used before extraction)
+#   quick_login(page): fast non-blocking check (used in the login stream loop)
+#   count(page)    : number of apply targets currently on screen
+#   load_more(page, total) -> bool : scroll to load more; True if more appeared
+#   process(context, page, emit, save_link) -> made_progress(bool)
+#   dismiss(page)  : best-effort close/recover after an error
+# save_link(url) is provided by the runner: it filters (is_application_url),
+# de-dupes, writes Excel, counts and emits — same for every source.
+# =====================================================================
+
+
+def capture_new_tab_url(context, page, click_locator, timeout=POPUP_TIMEOUT):
+    """Click something that opens the company site in a new tab; return its URL.
+
+    Falls back to a stray extra tab or a same-tab navigation. None if nothing.
+    """
+    try:
+        with context.expect_page(timeout=timeout) as new_page_info:
+            click_locator.click(force=True)
+        new_page = new_page_info.value
+        safe_wait_load(new_page)
+        return new_page.url
+    except Exception:
+        pass
+    if len(context.pages) > 1:
+        np = context.pages[-1]
+        safe_wait_load(np)
+        return np.url
+    return None
+
+
+# ---- Jobright source (existing, proven behaviour) --------------------
+
+def jobright_process(context, page, emit, save_link):
+    dismiss_overlays(page)
+    apply_buttons(page).first.click(timeout=6000)
+    page.wait_for_timeout(MODAL_SETTLE)
+
+    # Restriction keywords, scoped to the opened job dialog only.
+    scope_text = ""
+    try:
+        modal = page.locator(".ant-modal:visible, [role='dialog']:visible").last
+        if modal.count() > 0:
+            scope_text = modal.inner_text(timeout=1000)
+    except Exception:
+        scope_text = ""
+    if scope_text and any(k in scope_text for k in BLOCK_KEYWORDS):
+        emit("skip", {"reason": "restricted"})
+        dismiss_modal(page)
+        return True
+
+    apply_buttons(page).first.click(force=True)
+    page.wait_for_timeout(MODAL_SETTLE)
+    job_url = extract_external_url(context, page)
+    page.bring_to_front()
+
+    if job_url:
+        save_link(job_url)          # emits portal/duplicate/link
+        dismiss_modal(page)
+        return True
+    emit("skip", {"reason": "no-url"})
+    dismiss_modal(page)
+    return False
+
+
+# ---- Naukri source (SCAFFOLD — selectors need tuning from screenshots) ----
+# Naukri flow (to confirm): recommended/search jobs -> each card/detail has an
+# "Apply" button -> external jobs open the company site in a NEW TAB (that URL
+# is what we save); "Apply on company site" is the external variant.
+NAUKRI_START_URL = "https://www.naukri.com/mnjuser/recommendedjobs"
+NAUKRI_APPLY_RE = re.compile(r"^\s*Apply( on company site)?\s*$", re.I)
+NAUKRI_LOGGED_OUT_RE = re.compile(r"login|register|sign\s*in", re.I)
+
+
+def naukri_apply_buttons(page):
+    # TODO: confirm real selector from a logged-in Naukri screenshot.
+    return page.get_by_role("button", name=NAUKRI_APPLY_RE).or_(
+        page.get_by_role("link", name=NAUKRI_APPLY_RE)
+    )
+
+
+def naukri_logged_in(page, wait_ms=5000):
+    # Logged in if apply targets exist and no login/register CTA is shown.
+    try:
+        if page.get_by_role("link", name=NAUKRI_LOGGED_OUT_RE).count() > 0:
+            return False
+    except Exception:
+        pass
+    try:
+        naukri_apply_buttons(page).first.wait_for(timeout=wait_ms)
+        return True
+    except Exception:
+        return False
+
+
+def naukri_process(context, page, emit, save_link):
+    try:
+        btn = naukri_apply_buttons(page).first
+        # External apply opens a new tab -> capture that URL.
+        url = capture_new_tab_url(context, page, btn)
+    except Exception:
+        url = None
+    page.bring_to_front()
+    if url:
+        save_link(url)
+        # TODO: Naukri may show a confirm dialog; press Escape to move on.
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return True
+    emit("skip", {"reason": "no-url"})
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
+    return False
+
+
+SOURCES = {
+    "jobright": {
+        "start_url": DEFAULT_START_URL,
+        "logged_in": lambda page: is_logged_in(page),
+        "quick_login": lambda page: (not logged_out_markers(page)
+                                     and apply_buttons(page).count() > 0),
+        "count": lambda page: apply_buttons(page).count(),
+        "load_more": lambda page, total: try_load_more_jobs(page, total),
+        "process": jobright_process,
+        "dismiss": dismiss_modal,
+    },
+    "naukri": {
+        "start_url": NAUKRI_START_URL,
+        "logged_in": lambda page: naukri_logged_in(page),
+        "quick_login": lambda page: naukri_apply_buttons(page).count() > 0,
+        "count": lambda page: naukri_apply_buttons(page).count(),
+        "load_more": lambda page, total: try_load_more_jobs(page, total),
+        "process": naukri_process,
+        "dismiss": lambda page: page.keyboard.press("Escape"),
+    },
+}
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Extract external job application links from Jobright.ai."
@@ -378,11 +523,15 @@ def is_logged_in(page, wait_ms=5000):
 
 
 def interactive_login(context, page, emit, input_queue, stop_requested,
+                      quick_login=None, site_label="the site",
                       timeout_s=LOGIN_TIMEOUT_S):
     """Stream the page to the UI (CDP screencast) and replay user input until
     login completes. Returns True once the jobs feed appears or the user
     signals done. No VNC/Docker needed — pure CDP.
     """
+    if quick_login is None:
+        quick_login = lambda pg: (not logged_out_markers(pg)
+                                  and apply_buttons(pg).count() > 0)
     cdp = context.new_cdp_session(page)
     frames = queue.Queue()
 
@@ -395,7 +544,7 @@ def interactive_login(context, page, emit, input_queue, stop_requested,
         "maxWidth": LOGIN_VIEWPORT["width"], "maxHeight": LOGIN_VIEWPORT["height"],
         "everyNthFrame": 1,
     })
-    emit("need_login", {"message": "Log in to Jobright in the panel.",
+    emit("need_login", {"message": f"Log in to {site_label} in the panel.",
                         "width": LOGIN_VIEWPORT["width"],
                         "height": LOGIN_VIEWPORT["height"]})
 
@@ -441,8 +590,7 @@ def interactive_login(context, page, emit, input_queue, stop_requested,
                     break
 
             # Quick, non-blocking completion check (avoid 5s wait per tick).
-            if done or (not logged_out_markers(page)
-                        and apply_buttons(page).count() > 0):
+            if done or quick_login(page):
                 done = True
                 break
     finally:
@@ -459,7 +607,7 @@ def interactive_login(context, page, emit, input_queue, stop_requested,
 def extract_links(
     profile=DEFAULT_PROFILE,
     max_links=DEFAULT_MAX_LINKS,
-    url=DEFAULT_START_URL,
+    url=None,
     output=DEFAULT_OUTPUT_FILE,
     headless=False,
     login_wait=5000,
@@ -467,6 +615,7 @@ def extract_links(
     input_queue=None,
     on_event=None,
     should_stop=None,
+    source="jobright",
 ):
     """Core extraction. Emits structured events via on_event(type, payload).
 
@@ -484,6 +633,10 @@ def extract_links(
 
     def stop_requested():
         return bool(should_stop and should_stop())
+
+    cfg = SOURCES.get(source, SOURCES["jobright"])
+    if url is None:
+        url = cfg["start_url"]
 
     # Per-run state (no module globals -> safe for concurrent sessions).
     collected_links, saved_links = load_existing(output)
@@ -515,10 +668,12 @@ def extract_links(
         page.goto(url)
         emit("status", {"message": f"Opened {url} (profile: {profile})"})
 
-        if not is_logged_in(page):
+        if not cfg["logged_in"](page):
             if interactive:
                 ok = interactive_login(context, page, emit, input_queue,
-                                       stop_requested)
+                                       stop_requested,
+                                       quick_login=cfg["quick_login"],
+                                       site_label=source)
                 if not ok:
                     emit("error", {"message": "Login not completed."})
                     context.close()
@@ -528,7 +683,7 @@ def extract_links(
             else:
                 # Non-interactive: give a visible browser time for manual login.
                 page.wait_for_timeout(login_wait)
-                if not is_logged_in(page):
+                if not cfg["logged_in"](page):
                     emit("error", {"message": "Not logged in (no jobs found)."})
                     context.close()
                     emit("done", {"saved": 0, "attempts": 0,
@@ -537,21 +692,38 @@ def extract_links(
 
         emit("status", {"message": "Jobs detected. Extracting..."})
 
-        saved_count = 0
+        # Shared save routine (filter/dedupe/write/count/emit) — same per source.
+        counters = {"saved": 0}
+
+        def save_link(job_url):
+            if not is_application_url(job_url):
+                emit("skip", {"reason": "portal", "url": job_url})
+                return "portal"
+            if job_url in saved_links:
+                emit("skip", {"reason": "duplicate", "url": job_url})
+                return "dup"
+            saved_links.add(job_url)
+            collected_links.append(job_url)
+            save_to_excel(output, collected_links)
+            counters["saved"] += 1
+            emit("link", {"url": job_url, "index": counters["saved"],
+                          "max": max_links})
+            return "new"
+
         attempts = 0
         no_new_job_rounds = 0
         max_no_new_job_rounds = 5
         stuck_on_card = 0
 
-        while saved_count < max_links:
+        while counters["saved"] < max_links:
             if stop_requested():
-                emit("stopped", {"saved": saved_count})
+                emit("stopped", {"saved": counters["saved"]})
                 break
 
-            total = apply_buttons(page).count()
+            total = cfg["count"](page)
 
             if total == 0:
-                loaded = try_load_more_jobs(page, total)
+                loaded = cfg["load_more"](page, total)
                 if loaded:
                     no_new_job_rounds = 0
                     continue
@@ -563,62 +735,18 @@ def extract_links(
 
             no_new_job_rounds = 0
             attempts += 1
-            emit("progress", {"attempt": attempts, "saved": saved_count,
+            emit("progress", {"attempt": attempts, "saved": counters["saved"],
                               "max": max_links, "stuck": stuck_on_card})
 
             made_progress = False
             try:
-                # Clear floating popups (Trustpilot etc) that block the click,
-                # and use a short timeout so a blocked card fails fast (not 30s).
-                dismiss_overlays(page)
-                apply_buttons(page).first.click(timeout=6000)
-                page.wait_for_timeout(MODAL_SETTLE)
-
-                # Only check the opened job dialog for restriction keywords,
-                # not the whole page (a persistent phrase elsewhere = skip all).
-                scope_text = ""
-                try:
-                    modal = page.locator(".ant-modal:visible, [role='dialog']:visible").last
-                    if modal.count() > 0:
-                        scope_text = modal.inner_text(timeout=1000)
-                except Exception:
-                    scope_text = ""
-
-                if scope_text and any(k in scope_text for k in BLOCK_KEYWORDS):
-                    emit("skip", {"reason": "restricted"})
-                    dismiss_modal(page)
-                    made_progress = True
-                else:
-                    apply_buttons(page).first.click(force=True)
-                    page.wait_for_timeout(MODAL_SETTLE)
-
-                    job_url = extract_external_url(context, page)
-                    page.bring_to_front()
-
-                    if job_url:
-                        if not is_application_url(job_url):
-                            emit("skip", {"reason": "portal", "url": job_url})
-                            dismiss_modal(page)
-                            made_progress = True
-                        elif job_url in saved_links:
-                            emit("skip", {"reason": "duplicate", "url": job_url})
-                            dismiss_modal(page)
-                            made_progress = True
-                        else:
-                            saved_links.add(job_url)
-                            collected_links.append(job_url)
-                            save_to_excel(output, collected_links)
-                            saved_count += 1
-                            emit("link", {"url": job_url, "index": saved_count,
-                                          "max": max_links})
-                            dismiss_modal(page)
-                            made_progress = True
-                    else:
-                        emit("skip", {"reason": "no-url"})
-                        dismiss_modal(page)
+                made_progress = cfg["process"](context, page, emit, save_link)
             except Exception as e:
                 emit("error", {"message": repr(e)})
-                dismiss_modal(page)
+                try:
+                    cfg["dismiss"](page)
+                except Exception:
+                    pass
 
             close_extra_tabs(context, page)
             page.wait_for_timeout(400)
@@ -636,7 +764,7 @@ def extract_links(
         context.close()
 
     save_to_excel(output, collected_links)
-    emit("done", {"saved": saved_count, "attempts": attempts,
+    emit("done", {"saved": counters["saved"], "attempts": attempts,
                   "total": len(collected_links)})
     return list(collected_links)
 

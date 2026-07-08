@@ -6,6 +6,7 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const WS_URL = API.replace(/^http/, "ws") + "/ws/extract";
 
 export default function App() {
+  const [source, setSource] = useState("jobright");
   const [profile, setProfile] = useState("");
   const [maxLinks, setMaxLinks] = useState(31);
   const [headless, setHeadless] = useState(true);
@@ -84,6 +85,7 @@ export default function App() {
       }
       ws.send(
         JSON.stringify({
+          source,
           profile,
           max_links: Number(maxLinks),
           headless,
@@ -191,7 +193,19 @@ export default function App() {
         </header>
 
         {/* Controls */}
-        <div className="grid gap-4 rounded-2xl bg-slate-900 p-6 shadow-lg md:grid-cols-4">
+        <div className="grid gap-4 rounded-2xl bg-slate-900 p-6 shadow-lg md:grid-cols-5">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">Source</span>
+            <select
+              className="rounded-lg bg-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              disabled={running}
+            >
+              <option value="jobright">Jobright</option>
+              <option value="naukri">Naukri (beta)</option>
+            </select>
+          </label>
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-slate-400">Chrome profile</span>
             <input

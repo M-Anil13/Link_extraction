@@ -310,6 +310,7 @@ async def ws_extract(ws: WebSocket):
     max_links = int(params.get("max_links", 31))
     headless = bool(params.get("headless", True))
     interactive = bool(params.get("interactive", True))
+    source = params.get("source", "jobright")  # jobright | naukri
     user_email = params.get("email")  # for usage tracking
 
     # Reject a concurrent run on the same profile (Chrome locks the dir).
@@ -346,6 +347,7 @@ async def ws_extract(ws: WebSocket):
                 output=output,
                 on_event=on_event,
                 should_stop=stop_flag.is_set,
+                source=source,
             )
         except Exception as e:
             loop.call_soon_threadsafe(
