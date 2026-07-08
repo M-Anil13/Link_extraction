@@ -232,52 +232,62 @@ export default function Home() {
       <section className="mx-auto max-w-5xl px-6 pb-28">
         <h2 className="mb-3 text-center text-3xl font-bold">Where we extract from</h2>
         <p className="mx-auto mb-12 max-w-2xl text-center text-slate-400">
-          Today we extract from Jobright. LinkedIn is coming soon — then pull from
-          both at once and export together.
+          Pull direct company / career-site apply links from multiple job
+          platforms — pick your source and export together.
         </p>
 
-        <div className="grid gap-6 sm:grid-cols-2">
-          {/* Jobright - active, clickable -> sign in -> extractor */}
-          <button
-            onClick={() => navigate(authed ? "/app" : "/login")}
-            className="rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 text-left transition-all hover:border-emerald-400 hover:bg-slate-800"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 font-bold">
-                  JR
+        <div className="grid gap-6 sm:grid-cols-3">
+          {[
+            {
+              key: "JR",
+              name: "Jobright",
+              badge: "Active",
+              badgeCls: "bg-emerald-500/20 text-emerald-300",
+              border: "border-emerald-500/40 hover:border-emerald-400",
+              logoCls: "bg-indigo-600",
+              desc: "Live now — direct apply links from your Jobright feed.",
+            },
+            {
+              key: "in",
+              name: "LinkedIn",
+              badge: "Beta",
+              badgeCls: "bg-amber-500/20 text-amber-300",
+              border: "border-amber-500/30 hover:border-amber-400",
+              logoCls: "bg-[#0a66c2]",
+              desc: "Company career-site links (skips Easy Apply).",
+            },
+            {
+              key: "N",
+              name: "Naukri",
+              badge: "Beta",
+              badgeCls: "bg-amber-500/20 text-amber-300",
+              border: "border-amber-500/30 hover:border-amber-400",
+              logoCls: "bg-[#4a90d9]",
+              desc: "Direct apply links from your Naukri jobs.",
+            },
+          ].map((s) => (
+            <button
+              key={s.name}
+              onClick={() => navigate(authed ? "/app" : "/login")}
+              className={`rounded-2xl border ${s.border} bg-slate-900 p-6 text-left transition-all hover:bg-slate-800`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${s.logoCls} font-bold`}>
+                    {s.key}
+                  </span>
+                  <span className="text-lg font-semibold">{s.name}</span>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${s.badgeCls}`}>
+                  {s.badge}
                 </span>
-                <span className="text-lg font-semibold">Jobright</span>
               </div>
-              <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-medium text-emerald-300">
-                Active
+              <p className="mt-4 text-sm text-slate-400">{s.desc}</p>
+              <span className="mt-4 inline-block text-sm font-medium text-indigo-300">
+                {authed ? "Open extractor →" : "Sign in to start →"}
               </span>
-            </div>
-            <p className="mt-4 text-sm text-slate-400">
-              Live now — direct apply links extracted from your Jobright feed.
-            </p>
-            <span className="mt-4 inline-block text-sm font-medium text-emerald-300">
-              {authed ? "Open extractor →" : "Sign in to start →"}
-            </span>
-          </button>
-
-          {/* LinkedIn - coming soon (not clickable yet) */}
-          <div className="cursor-not-allowed rounded-2xl border border-amber-500/30 bg-slate-900 p-6 opacity-60">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0a66c2] font-bold">
-                  in
-                </span>
-                <span className="text-lg font-semibold">LinkedIn</span>
-              </div>
-              <span className="rounded-full bg-amber-500/20 px-3 py-1 text-xs font-medium text-amber-300">
-                Coming soon
-              </span>
-            </div>
-            <p className="mt-4 text-sm text-slate-400">
-              Soon — extract from Jobright + LinkedIn together, one export.
-            </p>
-          </div>
+            </button>
+          ))}
         </div>
 
         <div className="mt-14 text-center">
