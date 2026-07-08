@@ -204,6 +204,7 @@ export default function App() {
             >
               <option value="jobright">Jobright</option>
               <option value="naukri">Naukri (beta)</option>
+              <option value="linkedin">LinkedIn (beta)</option>
             </select>
           </label>
           <label className="flex flex-col gap-1 text-sm">

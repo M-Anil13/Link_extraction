@@ -425,6 +425,54 @@ def naukri_process(context, page, emit, save_link):
     return False
 
 
+# ---- LinkedIn source (SCAFFOLD — needs tuning; HIGH ban/ToS risk) ----------
+# Flow (to confirm): recommended/search jobs. "Easy Apply" = internal (no link,
+# skip). "Apply" = external, opens the company site in a NEW TAB (save that URL).
+LINKEDIN_START_URL = "https://www.linkedin.com/jobs/collections/recommended/"
+# Match "Apply" but NOT "Easy Apply".
+LINKEDIN_APPLY_RE = re.compile(r"^\s*Apply\s*$", re.I)
+LINKEDIN_LOGGED_OUT_RE = re.compile(r"sign in|join now|new to linkedin", re.I)
+
+
+def linkedin_apply_buttons(page):
+    # TODO: confirm from a logged-in LinkedIn screenshot. Excludes Easy Apply.
+    return page.get_by_role("button", name=LINKEDIN_APPLY_RE)
+
+
+def linkedin_logged_in(page, wait_ms=5000):
+    try:
+        if page.get_by_role("link", name=LINKEDIN_LOGGED_OUT_RE).count() > 0:
+            return False
+    except Exception:
+        pass
+    try:
+        linkedin_apply_buttons(page).first.wait_for(timeout=wait_ms)
+        return True
+    except Exception:
+        return False
+
+
+def linkedin_process(context, page, emit, save_link):
+    try:
+        url = capture_new_tab_url(context, page, linkedin_apply_buttons(page).first)
+    except Exception:
+        url = None
+    page.bring_to_front()
+    if url:
+        save_link(url)
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return True
+    emit("skip", {"reason": "no-url"})  # likely an Easy-Apply (internal) job
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
+    return False
+
+
 SOURCES = {
     "jobright": {
         "start_url": DEFAULT_START_URL,
@@ -443,6 +491,15 @@ SOURCES = {
         "count": lambda page: naukri_apply_buttons(page).count(),
         "load_more": lambda page, total: try_load_more_jobs(page, total),
         "process": naukri_process,
+        "dismiss": lambda page: page.keyboard.press("Escape"),
+    },
+    "linkedin": {
+        "start_url": LINKEDIN_START_URL,
+        "logged_in": lambda page: linkedin_logged_in(page),
+        "quick_login": lambda page: linkedin_apply_buttons(page).count() > 0,
+        "count": lambda page: linkedin_apply_buttons(page).count(),
+        "load_more": lambda page, total: try_load_more_jobs(page, total),
+        "process": linkedin_process,
         "dismiss": lambda page: page.keyboard.press("Escape"),
     },
 }
