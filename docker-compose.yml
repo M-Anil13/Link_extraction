@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: link_extractor_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - HEADLESS=True
+      - DATABASE_URL=sqlite+aiosqlite:///./app.db
+      - BROWSER_CHANNEL=
+    volumes:
+      - chrome_profiles:/app/chrome-profiles
+      - outputs_data:/app/outputs
+      - db_data:/app/app.db
+
+volumes:
+  chrome_profiles:
+  outputs_data:
+  db_data:
