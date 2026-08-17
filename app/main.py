@@ -106,7 +106,7 @@ def _err(status, msg):
 
 @app.post("/auth/signup")
 async def auth_signup(data: dict):
-    """Register a user; email an OTP to verify the address before they can log in."""
+    """Register a user directly without requiring OTP email verification."""
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
     name = (data.get("name") or "").strip() or email.split("@")[0]
@@ -115,30 +115,20 @@ async def auth_signup(data: dict):
     if len(password) < 6:
         return _err(400, "password must be at least 6 characters")
 
-    otp = gen_otp()
-    expires = datetime.utcnow() + timedelta(minutes=OTP_TTL_MIN)
     async with AsyncSessionLocal() as db:
         row = await get_user(db, email)
-        if row and row.verified:
-            return _err(409, "email already registered — please log in")
-        if row:  # exists but unverified -> refresh password + OTP
+        if row:  # update existing user
             row.password_hash = hash_pw(password)
             row.name = name
-            row.otp_code = otp
-            row.otp_expires = expires
+            row.verified = True
+            row.otp_code = None
         else:
             db.add(User(email=email, name=name,
                         password_hash=hash_pw(password),
-                        verified=False, otp_code=otp, otp_expires=expires))
+                        verified=True))
         await db.commit()
 
-    sent = await asyncio.to_thread(
-        send_email, email, "Your NexCV verification code",
-        f"Your verification code is {otp}. It expires in {OTP_TTL_MIN} minutes.",
-    )
-    if not sent:
-        return _err(500, "could not send verification email (server email not configured)")
-    return {"ok": True, "message": "verification code sent to your email"}
+    return {"ok": True, "email": email, "name": name}
 
 
 @app.post("/auth/verify")

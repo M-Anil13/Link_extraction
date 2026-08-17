@@ -125,7 +125,6 @@ export default function App() {
           break;
         case "login_ok":
           setNeedLogin(false);
-          setFrame(null);
           setStatus("Logged in — extracting");
           addLog("✓ " + (payload.message || "Login detected"));
           break;
@@ -281,23 +280,26 @@ export default function App() {
           </div>
         </div>
 
-        {/* Interactive login panel (CDP screencast) */}
-        {needLogin && (
-          <div className="mt-6 rounded-2xl border border-amber-500/40 bg-slate-900 p-6">
+        {/* Live browser view panel (CDP screencast) */}
+        {(needLogin || frame) && (
+          <div className="mt-6 rounded-2xl border border-indigo-500/40 bg-slate-900 p-6">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="font-semibold text-amber-300">
-                Log in to Jobright
+              <h2 className="font-semibold text-indigo-300">
+                {needLogin ? "🔑 Log in to Jobright" : "📺 Live Browser View"}
               </h2>
-              <button
-                onClick={() => sendInput({ type: "login_done" })}
-                className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium hover:bg-amber-500"
-              >
-                I'm logged in →
-              </button>
+              {needLogin && (
+                <button
+                  onClick={() => sendInput({ type: "login_done" })}
+                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium hover:bg-amber-500"
+                >
+                  I'm logged in →
+                </button>
+              )}
             </div>
             <p className="mb-3 text-xs text-slate-400">
-              Click and type directly on the page below. When the jobs feed
-              appears, extraction starts automatically.
+              {needLogin
+                ? "Click and type directly on the page below. When the jobs feed appears, extraction starts automatically."
+                : "Live view of Playwright navigating cards, opening modals, and extracting links in real-time."}
             </p>
             <div className="flex justify-center bg-black/40 p-2">
               {frame ? (
@@ -305,11 +307,11 @@ export default function App() {
                   ref={imgRef}
                   src={`data:image/jpeg;base64,${frame}`}
                   onClick={onFrameClick}
-                  className="max-w-full cursor-pointer"
-                  alt="login"
+                  className="max-w-full cursor-pointer rounded-lg border border-slate-800"
+                  alt="Live view"
                 />
               ) : (
-                <div className="py-20 text-slate-500">Loading page…</div>
+                <div className="py-20 text-slate-500">Loading live view…</div>
               )}
             </div>
           </div>

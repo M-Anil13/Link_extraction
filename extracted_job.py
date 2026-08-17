@@ -2,22 +2,27 @@ import argparse
 import os
 import queue
 import re
+import sys
 import time
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 from playwright.sync_api import sync_playwright
 
+# Configure UTF-8 encoding for stdout on Windows to prevent UnicodeEncodeError with emojis
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # --- Selectors -------------------------------------------------------------
-# We match by accessible button NAME with anchored regex instead of substring
-# text. Substring 'Apply' also matched 'Applied', so an already-applied card
-# looked like a fresh job and fed the stuck-card loop. Anchored regex avoids it.
-# If you inspect Jobright's DOM and find stable data-testid/class hooks, swap
-# these helpers to page.locator("[data-testid='...']") for resilience.
 APPLY_RE = re.compile(r"^\s*Apply( Now| With Autofill)?\s*$", re.I)
-MANUAL_RE = re.compile(r"Apply Without Customizing|Apply Manually|Apply on company", re.I)
+MANUAL_RE = re.compile(
+    r"Apply Without Customizing|Apply Manually|Apply on company|Apply directly|External Apply|Apply Site|Visit Company Site|Go to Application",
+    re.I,
+)
 YES_APPLIED_RE = re.compile(r"^\s*Yes, I applied!?|I applied\s*$", re.I)
-# Logged-out signal: auth CTAs only appear before login (substring match).
 LOGGED_OUT_RE = re.compile(
     r"sign\s*in|sign\s*up|log\s*in|login|get started|continue with", re.I
 )
@@ -29,8 +34,6 @@ def apply_buttons(page):
 
 
 def manual_buttons(page):
-    # "Apply Without Customizing" is often a link / plain text, not a <button>.
-    # Match button OR link OR any element containing the text.
     return (
         page.get_by_role("button", name=MANUAL_RE)
         .or_(page.get_by_role("link", name=MANUAL_RE))
@@ -41,16 +44,15 @@ def manual_buttons(page):
 def yes_applied_buttons(page):
     return page.get_by_role("button", name=YES_APPLIED_RE)
 
-# Edit these defaults if you want to control behavior directly in code.
+
 DEFAULT_PROFILE = "vamshi"
 DEFAULT_MAX_LINKS = 31
 DEFAULT_START_URL = "https://jobright.ai"
 DEFAULT_OUTPUT_FILE = "filtered_job_links.xlsx"
 
-# Short, explicit timeouts (ms). Default Playwright load wait is 30s -> hangs.
 POPUP_TIMEOUT = 6000        # wait for a new tab to open after manual apply
 LOAD_TIMEOUT = 8000         # wait for a page to finish loading
-MANUAL_BTN_TIMEOUT = 600    # wait for the "Apply Manually" button
+MANUAL_BTN_TIMEOUT = 3500   # wait for the "Apply Manually" / "Apply Without Customizing" button
 MODAL_SETTLE = 600          # small settle after opening a modal
 
 # Interactive login (CDP screencast) — fixed viewport so frame pixels == page
@@ -216,40 +218,45 @@ def dismiss_modal(page):
 
 def dismiss_overlays(page):
     """Remove popups that float over the feed and block Apply clicks.
-
-    Trustpilot review popups, weekly-trial promo cards, and leftover modal
-    masks intercept pointer events -> click timeouts. Strip them + close any
-    open modal before clicking Apply.
+    Strips Trustpilot, rating modals ('Enjoying Jobright?'), consent banners, and masks.
     """
     try:
         page.evaluate(
             """() => {
                 const sel = [
-                    // Jobright marketing / promos
-                    '[class*="trustpilot"]',
-                    '[class*="promotion"]', '[class*="promo-card"]',
-                    '[class*="trial-promotion"]',
-                    '[class*="upgrade"]', '[class*="paywall"]', '[class*="premium-modal"]',
-                    '[class*="newsletter"]', '[class*="subscribe-modal"]',
+                    // Jobright marketing / promos / feedback
+                    '[class*="trustpilot"]', '[class*="promotion"]', '[class*="promo-card"]',
+                    '[class*="trial-promotion"]', '[class*="upgrade"]', '[class*="paywall"]',
+                    '[class*="premium-modal"]', '[class*="newsletter"]', '[class*="subscribe-modal"]',
+                    '[class*="feedback"]', '[class*="rating"]', '[class*="enjoying"]',
                     // cookie / consent banners
                     '[class*="cookie"]', '[class*="consent"]', '[id*="cookie"]',
                     // onboarding tours
                     '.ant-tour', '[class*="onboarding"]', '[class*="-tour"]',
-                    // antd masks / overlays
-                    '.ant-modal-root', '.ant-modal-wrap', '.ant-modal-mask',
+                    // drawer overlays
                     '.ant-drawer', '.ant-drawer-mask',
                     // 3rd-party chat / survey widgets
                     '[id*="intercom"]', '[class*="intercom"]',
                     '.crisp-client', '#crisp-chatbox',
                     '[class*="drift"]', '[class*="hotjar"]', '[id*="hj_feedback"]'
                 ].join(',');
-                document.querySelectorAll(sel).forEach(e => e.remove());
+                document.querySelectorAll(sel).forEach(e => {
+                    if (e.innerText && e.innerText.includes("Enjoying Jobright")) {
+                        e.remove();
+                    } else if (!e.classList.contains("ant-modal")) {
+                        e.remove();
+                    }
+                });
             }"""
         )
     except Exception:
         pass
     try:
-        page.keyboard.press("Escape")
+        close_btn = page.locator(".ant-modal-close, [aria-label='Close']:visible").first
+        if close_btn.count() > 0:
+            modal_text = page.locator(".ant-modal-body").inner_text(timeout=300) or ""
+            if "Enjoying Jobright" in modal_text or "Rating" in modal_text:
+                close_btn.click(force=True, timeout=500)
     except Exception:
         pass
 
@@ -257,30 +264,46 @@ def dismiss_overlays(page):
 def extract_external_url(context, page):
     """Return the external application URL after clicking manual apply.
 
-    Handles three Jobright flows, all bounded by short timeouts:
-      1. New tab opens (workday / icims / rippling)         -> read new tab url
-      2. Inline embed, no new tab (greenhouse /embed/...)   -> read current url
-      3. Same-tab navigation away from jobright             -> read page url
+    Handles four Jobright flows:
+      1. Explicit 'Apply Without Customizing / Apply Manually' button/link in modal
+      2. External <a> link directly inside modal dialog
+      3. New tab popup opened on click
+      4. Same-tab navigation away from jobright.ai
     """
-    manual_apply_button = manual_buttons(page)
+    modal = page.locator(".ant-modal:visible, [role='dialog']:visible").last
 
-    # Flow 1: manual button present -> expect a popup tab.
-    try:
-        manual_apply_button.first.wait_for(timeout=MANUAL_BTN_TIMEOUT)
+    # Strategy 1: Look for explicit manual apply button/link inside modal or page
+    target_btn = None
+    if modal.count() > 0:
+        btn_in_modal = manual_buttons(modal)
+        if btn_in_modal.count() > 0:
+            target_btn = btn_in_modal.first
+    if target_btn is None:
+        btn_on_page = manual_buttons(page)
+        if btn_on_page.count() > 0:
+            target_btn = btn_on_page.first
+
+    if target_btn is not None:
         try:
-            with context.expect_page(timeout=POPUP_TIMEOUT) as new_page_info:
-                manual_apply_button.first.click(force=True)
-            new_page = new_page_info.value
-            safe_wait_load(new_page)
-            return new_page.url
+            target_btn.wait_for(timeout=MANUAL_BTN_TIMEOUT)
+            url = capture_new_tab_url(context, page, target_btn, timeout=POPUP_TIMEOUT)
+            if url:
+                return url
         except Exception:
-            # Button clicked but no popup (inline embed / same-tab nav).
-            page.wait_for_timeout(MODAL_SETTLE)
-    except Exception:
-        # No manual button at all.
-        pass
+            pass
 
-    # Flow 2/3: check for a stray extra tab, else current page if it left jobright.
+    # Strategy 2: Look for external <a> href directly inside modal
+    if modal.count() > 0:
+        try:
+            links = modal.locator("a[href]").all()
+            for lnk in links:
+                href = lnk.get_attribute("href") or ""
+                if href.startswith("http") and "jobright.ai" not in href.lower() and "linkedin.com" not in href.lower():
+                    return href
+        except Exception:
+            pass
+
+    # Strategy 3: Check for stray extra tab or main page nav
     if len(context.pages) > 1:
         new_page = context.pages[-1]
         safe_wait_load(new_page)
@@ -289,6 +312,7 @@ def extract_external_url(context, page):
             return url
     if "jobright.ai" not in (page.url or "").lower():
         return page.url
+
     return None
 
 
@@ -301,20 +325,6 @@ def close_extra_tabs(context, keep_page):
             pg.close()
         except Exception:
             pass
-
-
-# =====================================================================
-# Pluggable sources. Each source provides:
-#   start_url      : where to open
-#   logged_in(page): full check (used before extraction)
-#   quick_login(page): fast non-blocking check (used in the login stream loop)
-#   count(page)    : number of apply targets currently on screen
-#   load_more(page, total) -> bool : scroll to load more; True if more appeared
-#   process(context, page, emit, save_link) -> made_progress(bool)
-#   dismiss(page)  : best-effort close/recover after an error
-# save_link(url) is provided by the runner: it filters (is_application_url),
-# de-dupes, writes Excel, counts and emits — same for every source.
-# =====================================================================
 
 
 def capture_new_tab_url(context, page, click_locator, timeout=POPUP_TIMEOUT):
@@ -337,14 +347,25 @@ def capture_new_tab_url(context, page, click_locator, timeout=POPUP_TIMEOUT):
     return None
 
 
-# ---- Jobright source (existing, proven behaviour) --------------------
-
 def jobright_process(context, page, emit, save_link):
     dismiss_overlays(page)
-    apply_buttons(page).first.click(timeout=6000)
+
+    btn = apply_buttons(page).first
+    if btn.count() == 0:
+        return False
+
+    try:
+        btn.click(timeout=6000)
+    except Exception:
+        dismiss_overlays(page)
+        try:
+            btn.click(force=True, timeout=3000)
+        except Exception:
+            return False
+
     page.wait_for_timeout(MODAL_SETTLE)
 
-    # Restriction keywords, scoped to the opened job dialog only.
+    # Restriction keywords check inside opened modal
     scope_text = ""
     try:
         modal = page.locator(".ant-modal:visible, [role='dialog']:visible").last
@@ -352,13 +373,12 @@ def jobright_process(context, page, emit, save_link):
             scope_text = modal.inner_text(timeout=1000)
     except Exception:
         scope_text = ""
+
     if scope_text and any(k in scope_text for k in BLOCK_KEYWORDS):
         emit("skip", {"reason": "restricted"})
         dismiss_modal(page)
         return True
 
-    apply_buttons(page).first.click(force=True)
-    page.wait_for_timeout(MODAL_SETTLE)
     job_url = extract_external_url(context, page)
     page.bring_to_front()
 
@@ -366,6 +386,7 @@ def jobright_process(context, page, emit, save_link):
         save_link(job_url)          # emits portal/duplicate/link
         dismiss_modal(page)
         return True
+
     emit("skip", {"reason": "no-url"})
     dismiss_modal(page)
     return False
@@ -569,6 +590,12 @@ def parse_args():
         action="store_true",
         help="Run browser in headless mode.",
     )
+    parser.add_argument(
+        "--login-wait",
+        type=int,
+        default=300,
+        help="Maximum time in seconds to wait for manual login in non-interactive mode (default: 300).",
+    )
     return parser.parse_args()
 
 
@@ -698,7 +725,7 @@ def extract_links(
     url=None,
     output=DEFAULT_OUTPUT_FILE,
     headless=False,
-    login_wait=5000,
+    login_wait=300,
     interactive=False,
     input_queue=None,
     on_event=None,
@@ -712,7 +739,14 @@ def extract_links(
     Runs synchronously; call from a worker thread when used inside async code.
     """
     def emit(etype, payload=None):
-        print(f"[{etype}] {payload if payload is not None else ''}")
+        msg = f"[{etype}] {payload if payload is not None else ''}"
+        try:
+            print(msg)
+        except Exception:
+            try:
+                print(msg.encode("ascii", "replace").decode("ascii"))
+            except Exception:
+                pass
         if on_event:
             try:
                 on_event(etype, payload or {})
@@ -770,13 +804,37 @@ def extract_links(
                     return list(collected_links)
             else:
                 # Non-interactive: give a visible browser time for manual login.
-                page.wait_for_timeout(login_wait)
-                if not cfg["logged_in"](page):
-                    emit("error", {"message": "Not logged in (no jobs found)."})
+                timeout_s = int(login_wait / 1000) if login_wait > 1000 else int(login_wait)
+                if headless:
+                    emit("error", {"message": "Not logged in. Run without --headless to log in manually in Chrome."})
                     context.close()
                     emit("done", {"saved": 0, "attempts": 0,
                                   "total": len(collected_links)})
                     return list(collected_links)
+
+                emit("status", {"message": f"Not logged in. Please log in to {source} in the opened browser window (waiting up to {timeout_s}s)..."})
+                start_login = time.time()
+                logged_in = False
+                while time.time() - start_login < timeout_s:
+                    if stop_requested():
+                        break
+                    try:
+                        page.wait_for_timeout(1000)
+                        if cfg["quick_login"](page) or cfg["logged_in"](page):
+                            logged_in = True
+                            break
+                    except Exception:
+                        # Browser window or context was closed by user
+                        break
+
+                if not logged_in:
+                    emit("error", {"message": f"Not logged in (no jobs found after waiting {timeout_s}s)."})
+                    context.close()
+                    emit("done", {"saved": 0, "attempts": 0,
+                                  "total": len(collected_links)})
+                    return list(collected_links)
+                else:
+                    emit("status", {"message": "Login detected!"})
 
         emit("status", {"message": "Jobs detected. Extracting..."})
 
@@ -865,6 +923,7 @@ def run():
         url=args.url,
         output=args.output,
         headless=args.headless,
+        login_wait=args.login_wait,
     )
 
 
